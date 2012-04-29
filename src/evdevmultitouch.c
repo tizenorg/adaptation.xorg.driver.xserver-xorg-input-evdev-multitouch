@@ -1432,6 +1432,13 @@ EvdevMultitouchProcessEvent(InputInfoPtr pInfo, struct input_event *ev)
 #ifdef _DEBUG_MT_SEQUENCE_
 		  ErrorF("[ProcessEvent] ABS_MT_SLOT (value=%d)\n", ev->value);
 #endif
+		  if( pEvdevMultitouch->last_slot != ev->value )
+	  	 {
+	  	 	ev->code = SYN_REPORT;
+	  	 	EvdevMultitouchProcessSyncEvent(pInfo, ev);
+	  	 	ev->code = ABS_MT_SLOT;
+	  	 }
+
                 EvdevMultitouchProcessTrackingIDEvent(pInfo, ev);
             }
 	     else

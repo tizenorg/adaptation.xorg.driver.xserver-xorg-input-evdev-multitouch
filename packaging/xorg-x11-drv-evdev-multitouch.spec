@@ -2,8 +2,8 @@ Name:       xorg-x11-drv-evdev-multitouch
 Summary:    X.Org evdev multitouch input driver.
 Version:    2.3.2
 Release:    1
-Group:      TO_BE/FILLED_IN
-License:    TO BE FILLED IN
+Group:      System/X11
+License:    MIT
 Source0:    xf86-input-evdev-multitouch-%{version}.tar.gz
 BuildRequires:  pkgconfig(xorg-server)
 BuildRequires:  pkgconfig(xproto)
@@ -11,6 +11,8 @@ BuildRequires:  pkgconfig(randrproto)
 BuildRequires:  pkgconfig(inputproto)
 BuildRequires:  pkgconfig(kbproto)
 BuildRequires:  pkgconfig(xkbfile)
+BuildRequires:  pkgconfig(xorg-macros)
+
 
 %description
 X.Org X server -- evdev input multitouch driver This package provides the driver for input devices using evdev, the Linux
