@@ -28,7 +28,7 @@ X.Org X server -- evdev input multitouch driver This package provides the driver
 
 
 %prep
-%setup -q -n xf86-input-evdev-multitouch-%{version}
+%setup -q -n %{name}-%{version}
 
 %build
 export CFLAGS+=" -Wall -g -D_F_IGNORE_TSP_RESOLUTION_"
