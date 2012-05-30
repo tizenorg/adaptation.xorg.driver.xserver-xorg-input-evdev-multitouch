@@ -5,6 +5,7 @@ Release:    1
 Group:      System/X11
 License:    MIT
 Source0:    xf86-input-evdev-multitouch-%{version}.tar.gz
+Source1001: packaging/xorg-x11-drv-evdev-multitouch.manifest 
 BuildRequires:  pkgconfig(xorg-server)
 BuildRequires:  pkgconfig(xproto)
 BuildRequires:  pkgconfig(randrproto)
@@ -31,6 +32,7 @@ X.Org X server -- evdev input multitouch driver This package provides the driver
 %setup -q -n %{name}-%{version}
 
 %build
+cp %{SOURCE1001} .
 export CFLAGS+=" -Wall -g -D_F_IGNORE_TSP_RESOLUTION_"
 
 
@@ -44,6 +46,7 @@ rm -rf %{buildroot}
 
 
 %files
+%manifest xorg-x11-drv-evdev-multitouch.manifest
 /usr/include/xorg/evdevmultitouch-properties.h
 /usr/lib/pkgconfig/xorg-evdev-multitouch.pc
 /usr/lib/xorg/modules/input/evdevmultitouch_drv.so
