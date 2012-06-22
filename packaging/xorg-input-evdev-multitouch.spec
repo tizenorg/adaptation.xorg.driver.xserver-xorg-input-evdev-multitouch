@@ -1,19 +1,18 @@
-Name:       xorg-x11-drv-evdev-multitouch
-Summary:    X.Org evdev multitouch input driver.
-Version:    2.3.2
-Release:    1
-Group:      System/X11
-License:    MIT
-Source0:    xf86-input-evdev-multitouch-%{version}.tar.gz
-Source1001: packaging/xorg-x11-drv-evdev-multitouch.manifest 
-BuildRequires:  pkgconfig(xorg-server)
-BuildRequires:  pkgconfig(xproto)
-BuildRequires:  pkgconfig(randrproto)
+Name:           xorg-input-evdev-multitouch
+Version:        2.3.2
+Release:        3
+License:        MIT
+Summary:        X
+Group:          System/X11
+Source0:        xf86-input-evdev-multitouch-%{version}.tar.gz
+Source1001:     xorg-input-evdev-multitouch.manifest
 BuildRequires:  pkgconfig(inputproto)
 BuildRequires:  pkgconfig(kbproto)
+BuildRequires:  pkgconfig(randrproto)
 BuildRequires:  pkgconfig(xkbfile)
 BuildRequires:  pkgconfig(xorg-macros)
-
+BuildRequires:  pkgconfig(xorg-server)
+BuildRequires:  pkgconfig(xproto)
 
 %description
 X.Org X server -- evdev input multitouch driver This package provides the driver for input devices using evdev, the Linux
@@ -27,9 +26,8 @@ X.Org X server -- evdev input multitouch driver This package provides the driver
  .
  This package is built from the X.org xf86-input-evdev driver module.
 
-
 %prep
-%setup -q -n %{name}-%{version}
+%setup -q -n xf86-input-evdev-multitouch-%{version}
 
 %build
 cp %{SOURCE1001} .
@@ -38,17 +36,16 @@ export CFLAGS+=" -Wall -g -D_F_IGNORE_TSP_RESOLUTION_"
 
 %autogen --disable-static
 %configure --disable-static
-make %{?jobs:-j%jobs}
+make %{?_smp_mflags}
 
 %install
-rm -rf %{buildroot}
 %make_install
 
 
 %files
-%manifest xorg-x11-drv-evdev-multitouch.manifest
-/usr/include/xorg/evdevmultitouch-properties.h
-/usr/lib/pkgconfig/xorg-evdev-multitouch.pc
-/usr/lib/xorg/modules/input/evdevmultitouch_drv.so
-/usr/share/man/man4/evdevmultitouch.4.gz
+%manifest xorg-input-evdev-multitouch.manifest
+%{_includedir}/xorg/evdevmultitouch-properties.h
+%{_prefix}/lib/pkgconfig/xorg-evdev-multitouch.pc
+%{_prefix}/lib/xorg/modules/input/evdevmultitouch_drv.so
+%{_mandir}/man4/evdevmultitouch.4.gz
 
