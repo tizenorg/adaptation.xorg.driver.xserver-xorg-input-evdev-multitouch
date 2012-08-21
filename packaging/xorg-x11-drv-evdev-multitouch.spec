@@ -1,18 +1,18 @@
-Name:       xorg-x11-drv-evdev-multitouch
+#sbs-git:slp/pkgs/xorg/driver/xserver-xorg-input-evdev-multitouch xserver-xorg-input-evdev-multitouch 2.3.2 b89f300e6969a0b8cef3bbe5720ec5300baf4ad3
+Name:	xorg-x11-drv-evdev-multitouch
 Summary:    X.Org evdev multitouch input driver.
-Version:    2.3.2
+Version: 2.3.2
 Release:    1
-Group:      System/X11
-License:    MIT
-Source0:    xf86-input-evdev-multitouch-%{version}.tar.gz
+Group:      TO_BE/FILLED_IN
+License:    TO BE FILLED IN
+Source0:    %{name}-%{version}.tar.gz
+BuildRequires:  pkgconfig(xorg-macros)
 BuildRequires:  pkgconfig(xorg-server)
 BuildRequires:  pkgconfig(xproto)
 BuildRequires:  pkgconfig(randrproto)
 BuildRequires:  pkgconfig(inputproto)
 BuildRequires:  pkgconfig(kbproto)
 BuildRequires:  pkgconfig(xkbfile)
-BuildRequires:  pkgconfig(xorg-macros)
-
 
 %description
 X.Org X server -- evdev input multitouch driver This package provides the driver for input devices using evdev, the Linux
@@ -28,11 +28,10 @@ X.Org X server -- evdev input multitouch driver This package provides the driver
 
 
 %prep
-%setup -q -n xf86-input-evdev-multitouch-%{version}
+%setup -q
 
 %build
-export CFLAGS+=" -Wall -g -D_F_IGNORE_TSP_RESOLUTION_"
-
+export CFLAGS+=" -Wall -g -D_F_IGNORE_TSP_RESOLUTION_ -D_F_SUPPORT_PREFERRED_NAME_ -D_F_GESTURE_EXTENSION_ "
 
 %autogen --disable-static
 %configure --disable-static

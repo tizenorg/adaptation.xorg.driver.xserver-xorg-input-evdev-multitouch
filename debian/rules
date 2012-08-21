@@ -11,6 +11,7 @@ include debian/xsfbs/xsfbs.mk
 
 CFLAGS = -Wall -g -D_F_IGNORE_TSP_RESOLUTION_
 CFLAGS += -D_F_GESTURE_EXTENSION_
+CFLAGS += -D_F_SUPPORT_PREFERRED_NAME_
 #CFLAGS += -D_DEBUG_MT_SEQUENCE_
 LDFLAGS +=  -Wl,--hash-style=both -Wl,--as-needed
 ifneq (,$(filter noopt,$(DEB_BUILD_OPTIONS)))
@@ -47,7 +48,7 @@ obj-$(DEB_BUILD_GNU_TYPE)/config.status: configure
 	../configure --prefix=/usr --mandir=\$${prefix}/share/man \
 	             --infodir=\$${prefix}/share/info $(confflags) \
 	             CFLAGS="$(CFLAGS)" \
-	             LDFLAGS="$(LDFLAGS)" 
+	             LDFLAGS="$(LDFLAGS)"
 
 build: build-stamp
 build-stamp: obj-$(DEB_BUILD_GNU_TYPE)/config.status

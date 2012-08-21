@@ -287,12 +287,14 @@ typedef struct {
     int num_mt;
     int id;
     int last_slot;
-#if 1//ABS_MT_SLOT
     BOOL mt_slot_supported;
-#endif
     BOOL sync_mt;
     BOOL associated;
     BOOL use_poll;//polling_with_vsync
+
+    float transform[9];
+    BOOL use_transform;
+    struct pixman_transform inv_transform;
 
     int touch_state;
     Time evtime;

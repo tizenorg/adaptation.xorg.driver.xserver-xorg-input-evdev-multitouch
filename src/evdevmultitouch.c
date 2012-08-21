@@ -49,6 +49,9 @@
 
 #include <xf86.h>
 #include <xf86Xinput.h>
+#include <xorg/input.h>
+#include <xorg/inputstr.h>
+#include <xorg/optionstr.h>
 #include <exevents.h>
 #include <xorgVersion.h>
 #include <xkbsrv.h>
@@ -205,9 +208,6 @@ volatile VSYNC_INPUT_DISPATCH_TABLE *vsync_input_table = NULL;
 
 int g_syspoll_fd = -1;
 int g_pressed = 0;
-float transform[9];
-BOOL use_transform = False;
-struct pixman_transform inv_transform;
 
 int
 poll_control(char cmd)
@@ -236,7 +236,7 @@ sync_poll(int vsync_counter)
  * cannot be used by evdevmultitouch, leaving us with a space of 2 at the end. */
 static EvdevMultitouchPtr evdevmultitouch_devices[MAXDEVICES] = {NULL};
 
-static size_t CountBits(unsigned long *array, size_t nlongs)
+static size_t EvdevMultitouchCountBits(unsigned long *array, size_t nlongs)
 {
     unsigned int i;
     size_t count = 0;
@@ -633,13 +633,13 @@ EvdevMultitouchProcessValuators(InputInfoPtr pInfo, int v[MAX_VALUATORS], int *n
             v[1] = (pEvdevMultitouch->absinfo[ABS_Y].maximum - v[1] +
                     pEvdevMultitouch->absinfo[ABS_Y].minimum);
 
- 	if( use_transform )
+ 	if( pEvdevMultitouch->use_transform )
 	{
 		p.vector[0] = pixman_int_to_fixed(v[0]);
 		p.vector[1] = pixman_int_to_fixed(v[1]);
 		p.vector[2] = pixman_int_to_fixed(1);
 
-		pixman_transform_point(&inv_transform, &p);
+		pixman_transform_point(&pEvdevMultitouch->inv_transform, &p);
 
 		v[0] = pixman_fixed_to_int(p.vector[0]);
 		v[1] = pixman_fixed_to_int(p.vector[1]);
@@ -1902,8 +1902,6 @@ EvdevMultitouchAddKeyClass(DeviceIntPtr device)
 
 #endif
 
-    pInfo->flags |= XI86_KEYBOARD_CAPABLE;
-
     return Success;
 }
 
@@ -1924,7 +1922,7 @@ EvdevMultitouchAddAbsClass(DeviceIntPtr device)
     if (!TestBit(EV_ABS, g_pEvdevMultitouch->bitmask))
             return !Success;
 
-    num_axes = CountBits(g_pEvdevMultitouch->abs_bitmask, NLONGS(ABS_MAX));
+    num_axes = EvdevMultitouchCountBits(g_pEvdevMultitouch->abs_bitmask, NLONGS(ABS_MAX));
     if (num_axes < 1)
         return !Success;
     pEvdevMultitouch->num_vals = num_axes;
@@ -1968,7 +1966,7 @@ EvdevMultitouchAddAbsClass(DeviceIntPtr device)
 #endif
                                    pEvdevMultitouch->absinfo[axis].minimum,
                                    pEvdevMultitouch->absinfo[axis].maximum,
-                                   10000, 0, 10000);
+                                   10000, 0, 10000, Absolute);
         xf86InitValuatorDefaults(device, axnum);
         pEvdevMultitouch->old_vals[axnum] = -1;
     }
@@ -1978,6 +1976,7 @@ EvdevMultitouchAddAbsClass(DeviceIntPtr device)
     if (!InitPtrFeedbackClassDeviceStruct(device, EvdevMultitouchPtrCtrlProc))
         return !Success;
 
+#if 0
     if ((TestBit(ABS_X, pEvdevMultitouch->abs_bitmask) &&
          TestBit(ABS_Y, pEvdevMultitouch->abs_bitmask)) ||
         (TestBit(ABS_RX, pEvdevMultitouch->abs_bitmask) &&
@@ -1993,6 +1992,7 @@ EvdevMultitouchAddAbsClass(DeviceIntPtr device)
         (TestBit(ABS_TILT_X, pEvdevMultitouch->abs_bitmask) &&
          TestBit(ABS_TILT_Y, pEvdevMultitouch->abs_bitmask)))
         pInfo->flags |= XI86_POINTER_CAPABLE;
+#endif
 
     return Success;
 }
@@ -2011,7 +2011,7 @@ EvdevMultitouchAddRelClass(DeviceIntPtr device)
     if (!TestBit(EV_REL, pEvdevMultitouch->bitmask))
         return !Success;
 
-    num_axes = CountBits(pEvdevMultitouch->rel_bitmask, NLONGS(REL_MAX));
+    num_axes = EvdevMultitouchCountBits(pEvdevMultitouch->rel_bitmask, NLONGS(REL_MAX));
     if (num_axes < 1)
         return !Success;
 
@@ -2071,7 +2071,7 @@ EvdevMultitouchAddRelClass(DeviceIntPtr device)
 #if GET_ABI_MAJOR(ABI_XINPUT_VERSION) >= 7
                 atoms[axnum],
 #endif
-                -1, -1, 1, 0, 1);
+                -1, -1, 1, 0, 1, Relative);
         xf86InitValuatorDefaults(device, axnum);
     }
 
@@ -2079,8 +2079,6 @@ EvdevMultitouchAddRelClass(DeviceIntPtr device)
 
     if (!InitPtrFeedbackClassDeviceStruct(device, EvdevMultitouchPtrCtrlProc))
         return !Success;
-
-    pInfo->flags |= XI86_POINTER_CAPABLE;
 
     return Success;
 }
@@ -2477,6 +2475,7 @@ EvdevMultitouchProc(DeviceIntPtr device, int what)
 static int
 EvdevMultitouchCacheCompare(InputInfoPtr pInfo, BOOL compare)
 {
+    int i;
     EvdevMultitouchPtr pEvdevMultitouch = pInfo->private;
     size_t len;
 
@@ -2535,7 +2534,6 @@ EvdevMultitouchCacheCompare(InputInfoPtr pInfo, BOOL compare)
         goto error;
     }
 
-#if 1//ABS_MT_SLOT
     if( TestBit(ABS_MT_SLOT, abs_bitmask) && TestBit(ABS_MT_TRACKING_ID, abs_bitmask) )
     {
          ErrorF("[X11] MT Protocol B Type : ABS_MT_SLOT is supported : \n");
@@ -2546,7 +2544,6 @@ EvdevMultitouchCacheCompare(InputInfoPtr pInfo, BOOL compare)
          ErrorF("[X11] MT Protocol A Type : ABS_MT_SLOT is NOT supported\n");
 	  pEvdevMultitouch->mt_slot_supported = (BOOL)0;
     }
-#endif
 
     if (!compare) {
         memcpy(pEvdevMultitouch->abs_bitmask, abs_bitmask, len);
@@ -2786,8 +2783,6 @@ EvdevMultitouchProbe(InputInfoPtr pInfo)
     }
 
     if (has_rel_axes || has_abs_axes || num_buttons) {
-        pInfo->flags |= XI86_POINTER_CAPABLE | XI86_SEND_DRAG_EVENTS |
-                        XI86_CONFIGURED;
 	if (pEvdevMultitouch->flags & EVDEVMULTITOUCH_TOUCHPAD) {
 	    xf86Msg(X_INFO, "%s: Configuring as touchpad\n", pInfo->name);
 	    pInfo->type_name = XI_TOUCHPAD;
@@ -2812,24 +2807,15 @@ EvdevMultitouchProbe(InputInfoPtr pInfo)
                     pInfo->name);
         } else {
             xf86Msg(X_INFO, "%s: Configuring as keyboard\n", pInfo->name);
-            pInfo->flags |= XI86_KEYBOARD_CAPABLE | XI86_CONFIGURED;
 	    pInfo->type_name = XI_KEYBOARD;
         }
     }
 
-    if (has_scroll && (pInfo->flags & XI86_CONFIGURED) &&
-        (pInfo->flags & XI86_POINTER_CAPABLE) == 0)
+    if (has_scroll)
     {
         xf86Msg(X_INFO, "%s: Adding scrollwheel support\n", pInfo->name);
-        pInfo->flags  |= XI86_POINTER_CAPABLE;
         pEvdevMultitouch->flags |= EVDEVMULTITOUCH_BUTTON_EVENTS;
         pEvdevMultitouch->flags |= EVDEVMULTITOUCH_RELATIVE_EVENTS;
-    }
-
-    if ((pInfo->flags & XI86_CONFIGURED) == 0) {
-        xf86Msg(X_WARNING, "%s: Don't know how to use device\n",
-		pInfo->name);
-        return 1;
     }
 
     return 0;
@@ -2879,20 +2865,21 @@ static void EvdevMultitouchSetTransform(InputInfoPtr pInfo, int num_transform, f
 {
 	int x, y;
 	struct pixman_transform tr;
+	EvdevMultitouchPtr pEvdevMultitouch = pInfo->private;
 
 	if( num_transform != 9 )
 	{
-		use_transform = False;
+		pEvdevMultitouch->use_transform = False;
 		return;
 	}
-	use_transform = True;
+	pEvdevMultitouch->use_transform = True;
 
-	memcpy(transform, tmatrix, sizeof(transform));
+	memcpy(pEvdevMultitouch->transform, tmatrix, sizeof(pEvdevMultitouch->transform));
 	for (y=0; y<3; y++)
 		for (x=0; x<3; x++)
 			tr.matrix[y][x] = pixman_double_to_fixed((double)*tmatrix++);
 
-	pixman_transform_invert(&inv_transform, &tr);
+	pixman_transform_invert(&pEvdevMultitouch->inv_transform, &tr);
 }
 
 static void
@@ -3002,8 +2989,8 @@ IsMaster(DeviceIntPtr dev)
 DeviceIntPtr
 GetPairedDevice(DeviceIntPtr dev)
 {
-    if (!IsMaster(dev) && dev->u.master)
-        dev = dev->u.master;
+    if (!IsMaster(dev) && dev->master)
+        dev = dev->master;
 
     return dev->spriteInfo->paired;
 }
@@ -3016,7 +3003,7 @@ GetMaster(DeviceIntPtr dev, int which)
     if (IsMaster(dev))
         master = dev;
     else
-        master = dev->u.master;
+        master = dev->master;
 
     if (master)
     {
@@ -3070,61 +3057,73 @@ EvdevMultitouchGetGrabInfo(InputInfoPtr pInfo, BOOL  val)
 	}
 }
 
-static InputInfoPtr
-EvdevMultitouchPreInit(InputDriverPtr drv, IDevPtr dev, int flags)
+static int
+EvdevMultitouchPreInit(InputDriverPtr drv, InputInfoPtr pInfo, int flags)
 {
-    InputInfoPtr pInfo;
+    int rc = BadAlloc;
     const char *device, *str;
     int num_calibration = 0, calibration[4] = { 0, 0, 0, 0 };
     int num_resolution = 0, resolution[4] = { 0, 0, 0, 0 };
     int num_transform = 0; float tr[9];
     EvdevMultitouchPtr pEvdevMultitouch;
     char *type;
+    char *name;
 
-    if (!(pInfo = xf86AllocateInput(drv, 0)))
-	return NULL;
+    if(!pInfo)
+    {
+        xf86DrvMsg(-1, X_ERROR, "[X11][EvdevMultitouchPreInit] pInfo is NULL !\n");
+        goto error;
+    }
 
     /* Initialise the InputInfoRec. */
-    pInfo->name = dev->identifier;
     pInfo->flags = 0;
     pInfo->type_name = "UNKNOWN";
     pInfo->device_control = EvdevMultitouchProc;
-    pInfo->history_size = 0;
-    pInfo->control_proc = NULL;
-    pInfo->close_proc = NULL;
     pInfo->switch_mode = NULL;
-    pInfo->conversion_proc = NULL;
-    pInfo->reverse_conversion_proc = NULL;
     pInfo->dev = NULL;
-    pInfo->private_flags = 0;
-    pInfo->always_core_feedback = NULL;
-    pInfo->conf_idev = dev;
 
     if (!(pEvdevMultitouch = calloc(sizeof(EvdevMultitouchRec), 1)))
-        return pInfo;
+        goto error;
 
     pInfo->private = pEvdevMultitouch;
 
-    xf86CollectInputOptions(pInfo, evdevmultitouchDefaults, NULL);
+    xf86CollectInputOptions(pInfo, evdevmultitouchDefaults);
     xf86ProcessCommonOptions(pInfo, pInfo->options);
     pEvdevMultitouch->id = -1;
- 
+
+ #ifdef _F_SUPPORT_PREFERRED_NAME_
+    if (!strstr(pInfo->name, "subdev") && !strstr(pInfo->name, "Virtual")) {
+        str = xf86CheckStrOption(pInfo->options, "PreferredName", NULL);
+        if (str) {
+            pInfo->name = str;
+        }
+        else {
+            name = malloc((strlen("Touchscreen")+1)*sizeof(char));
+            if(!name)
+            {
+            	ErrorF("[X11][EvdevMultitouchPreInit] Failed to allocate memory for a name of a touchscreen device !\n");
+            	goto error;
+            }
+            snprintf(name, strlen("Touchscreen")+1, "Touchscreen");
+            pInfo->name = name;
+        }
+    }
+#endif//_F_SUPPORT_PREFERRED_NAME_
  
      /* If Type == Object, this is a device for an object to use */
-    type = xf86CheckStrOption(dev->commonOptions, "Type", NULL);
+    type = xf86CheckStrOption(pInfo->options, "Type", NULL);
 
-    xf86Msg(X_INFO, "%s: EvdevMultitouch Type %s found\n", dev->identifier,type);
+    xf86Msg(X_INFO, "%s: EvdevMultitouch Type %s found\n", pInfo->name, type);
        
     if (type != NULL && strcmp(type, "Object") == 0) {
         EvdevMultitouchPtr pCreatorEvdevMultitouch;
         if (!pCreatorInfo){
-            return pInfo;
+            return Success;
         }
         pCreatorEvdevMultitouch = pCreatorInfo->private;
-        xf86Msg(X_INFO, "%s: EvdevMultitouch subdevice found\n", dev->identifier);
+        xf86Msg(X_INFO, "%s: EvdevMultitouch subdevice found\n", pInfo->name);
         memcpy(pEvdevMultitouch, pCreatorEvdevMultitouch, sizeof(EvdevMultitouchRec));
         pInfo->read_input = EvdevMultitouchSubdevReadInput;
-        pInfo->flags |= XI86_CONFIGURED;
         pEvdevMultitouch->associated = FALSE;
         pInfo->type_name = pCreatorInfo->type_name;
         pEvdevMultitouch->num_multitouch = 1;
@@ -3144,11 +3143,11 @@ EvdevMultitouchPreInit(InputDriverPtr drv, IDevPtr dev, int flags)
          */
         pEvdevMultitouch->tool = 1;
 
-        device = xf86CheckStrOption(dev->commonOptions, "Device", NULL);
+        device = xf86CheckStrOption(pInfo->options, "Device", NULL);
         if (!device) {
             xf86Msg(X_ERROR, "%s: No device specified.\n", pInfo->name);
-        xf86DeleteInput(pInfo, 0);
-            return NULL;
+            rc = BadValue;
+            goto error;
         }
 
         pEvdevMultitouch->device = device;
@@ -3160,8 +3159,8 @@ EvdevMultitouchPreInit(InputDriverPtr drv, IDevPtr dev, int flags)
 
         if (pInfo->fd < 0) {
             xf86Msg(X_ERROR, "Unable to open evdevmultitouch device \"%s\".\n", device);
-        xf86DeleteInput(pInfo, 0);
-            return NULL;
+            rc = BadValue;
+            goto error;
         }
 
         /* Check major/minor of device node to avoid adding duplicate devices. */
@@ -3171,8 +3170,8 @@ EvdevMultitouchPreInit(InputDriverPtr drv, IDevPtr dev, int flags)
             xf86Msg(X_WARNING, "%s: device file already in use. Ignoring.\n",
                     pInfo->name);
             close(pInfo->fd);
-            xf86DeleteInput(pInfo, 0);
-            return NULL;
+            rc = BadValue;
+            goto error;
         }
 
         pEvdevMultitouch->reopen_attempts = xf86SetIntOption(pInfo->options, "ReopenAttempts", 10);
@@ -3208,7 +3207,7 @@ EvdevMultitouchPreInit(InputDriverPtr drv, IDevPtr dev, int flags)
                         pInfo->name, num_resolution);
         }
 
-	 use_transform = False;
+	 pEvdevMultitouch->use_transform = False;
         str = xf86CheckStrOption(pInfo->options, "Transform", NULL);
         if (str) {
             num_transform = sscanf(str, "%f %f %f %f %f %f %f %f %f",
@@ -3228,24 +3227,24 @@ EvdevMultitouchPreInit(InputDriverPtr drv, IDevPtr dev, int flags)
         /* Grabbing the event device stops in-kernel event forwarding. In other
            words, it disables rfkill and the "Macintosh mouse button emulation".
            Note that this needs a server that sets the console to RAW mode. */
-        pEvdevMultitouch->grabDevice = xf86CheckBoolOption(dev->commonOptions, "GrabDevice", 0);
+        pEvdevMultitouch->grabDevice = xf86CheckBoolOption(pInfo->options, "GrabDevice", 0);
 
         /* Get setting for checking wether a point is still alive */
-        pEvdevMultitouch->timeout = xf86CheckIntOption(dev->commonOptions,
+        pEvdevMultitouch->timeout = xf86CheckIntOption(pInfo->options,
                 "SubdevTimeout", DEFAULT_TIMEOUT);
         if (pEvdevMultitouch->timeout < 1) {
             pEvdevMultitouch->timeout = 1;
         }
         xf86Msg(X_INFO, "%s: SubdevTimeout set to %d\n",
-                dev->identifier, (int)pEvdevMultitouch->timeout);
+                pInfo->name, (int)pEvdevMultitouch->timeout);
 
         EvdevMultitouchInitButtonMapping(pInfo);
 
         if (EvdevMultitouchCacheCompare(pInfo, FALSE) ||
             EvdevMultitouchProbe(pInfo)) {
             close(pInfo->fd);
-            xf86DeleteInput(pInfo, 0);
-            return NULL;
+            rc = BadValue;
+            goto error;
         }
         
         if ((pEvdevMultitouch->flags & EVDEVMULTITOUCH_MULTITOUCH) && !pEvdevMultitouch->num_buttons) {
@@ -3280,6 +3279,8 @@ EvdevMultitouchPreInit(InputDriverPtr drv, IDevPtr dev, int flags)
         EvdevMultitouchAddDevice(pInfo);
     }
 
+    pEvdevMultitouch->use_transform = False;
+
     if (pEvdevMultitouch->flags & EVDEVMULTITOUCH_BUTTON_EVENTS)
     {
         EvdevMultitouchMBEmuPreInit(pInfo);
@@ -3287,7 +3288,12 @@ EvdevMultitouchPreInit(InputDriverPtr drv, IDevPtr dev, int flags)
         EvdevMultitouchDragLockPreInit(pInfo);
     }
 
-    return pInfo;
+    return Success;
+
+error:
+    if (pInfo->fd >= 0)
+        close(pInfo->fd);
+    return rc;
 }
 
 _X_EXPORT InputDriverRec EVDEVMULTITOUCHh = {
@@ -3728,7 +3734,7 @@ EvdevMultitouchInitProperty(DeviceIntPtr dev)
 
 		/* matrix to transform */
 		prop_transform = MakeAtom(EVDEVMULTITOUCH_PROP_TRANSFORM, strlen(EVDEVMULTITOUCH_PROP_TRANSFORM),  TRUE);
-		rc = XIChangeDeviceProperty(dev, prop_transform, XIGetKnownProperty(XATOM_FLOAT), 32, PropModeReplace, 9, transform, FALSE);
+		rc = XIChangeDeviceProperty(dev, prop_transform, XIGetKnownProperty(XATOM_FLOAT), 32, PropModeReplace, 9, pEvdevMultitouch->transform, FALSE);
 
 	        if (rc != Success)
 	            return;
@@ -3882,21 +3888,20 @@ static InputOption *EvdevMultitouchOptionDupConvert(pointer original)
     InputOption *iopts = NULL, *new;
     InputInfoRec dummy;
 
-
     memset(&dummy, 0, sizeof(dummy));
-    xf86CollectInputOptions(&dummy, NULL, original);
+    dummy.options = xf86OptionListDuplicate(original);
 
     while(dummy.options)
     {
-        new = calloc(1, sizeof(InputOption));
+        new = calloc(1, sizeof(struct _InputOption));
 
-        new->key = xf86OptionName(dummy.options);
-        new->value = xf86OptionValue(dummy.options);
-
-        new->next = iopts;
+        new->opt_name = xf86OptionName(dummy.options);
+        new->opt_val = xf86OptionValue(dummy.options);
+        new->list.next = iopts;
         iopts = new;
         dummy.options = xf86NextOption(dummy.options);
     }
+
     return iopts;
 }
 static void EvdevMultitouchFreeInputOpts(InputOption* opts)
@@ -3905,9 +3910,9 @@ static void EvdevMultitouchFreeInputOpts(InputOption* opts)
 
     while(opts)
     {
-        tmp = opts->next;
-        free(opts->key);
-        free(opts->value);
+        tmp = opts->list.next;
+        free(opts->opt_name);
+        free(opts->opt_val);
         free(opts);
         opts = tmp;
     }
@@ -3917,13 +3922,13 @@ static void EvdevMultitouchReplaceOption(InputOption *opts,const char* key, char
 
     while(opts)
     {
-        if (xf86NameCmp(opts->key, key) == 0)
+        if (xf86NameCmp(opts->opt_name, key) == 0)
         {
 
-            free(opts->value);
-            opts->value = strdup(value);
+            free(opts->opt_val);
+            opts->opt_val = strdup(value);
         }
-        opts = opts->next;
+        opts = opts->list.next;
     }
 }
 
@@ -3938,24 +3943,22 @@ EvdevMultitouchCreateSubDevice(InputInfoPtr pInfo, int id) {
 
     DeviceIntPtr dev; /* dummy */
     InputOption *input_options = NULL;
+    InputOption *iopts = NULL;
     char* name;
-    
 
     pInfo->options = xf86AddNewOption(pInfo->options, "Type", "core");
     pInfo->options = xf86AddNewOption(pInfo->options, "SendCoreEvents", "off");
 
     /* Create new device */
-
     input_options = EvdevMultitouchOptionDupConvert(pInfo->options);
-
     EvdevMultitouchReplaceOption(input_options, "type","Object");
+    EvdevMultitouchReplaceOption(input_options, "MultiTouch","1");
 
-    //EvdevMultitouchReplaceOption(input_options, "SendCoreEvents","off"); //FIXME: bug in xserver
     name = malloc( (strlen(pInfo->name) + strlen(" subdev ") + 20 )*sizeof(char)); // 20 for adding the id
 
     if( !name )
     {
-        ErrorF("[X11][%s] Failed to allocate memory !\n", __FUNCTION__);
+        xf86DrvMsg(-1, X_ERROR, "[X11][%s] Failed to allocate memory !\n", __FUNCTION__);
 	 return NULL;
     }
 
@@ -3963,8 +3966,7 @@ EvdevMultitouchCreateSubDevice(InputInfoPtr pInfo, int id) {
     EvdevMultitouchReplaceOption(input_options, "name",name);
 
     pCreatorInfo = pInfo;
-    NewInputDeviceRequest(input_options, NULL, &dev);//for xserver 1.8.0
-    //NewInputDeviceRequest(input_options, &dev);//for xserver 1.7.1
+    NewInputDeviceRequest(input_options, NULL, &dev);
     pSubdev = dev->public.devicePrivate;
     pCreatorInfo = NULL;
 
@@ -3973,8 +3975,10 @@ EvdevMultitouchCreateSubDevice(InputInfoPtr pInfo, int id) {
     free(name);
     return pSubdev;
 }
+
 static void
-EvdevMultitouchDeleteSubDevice(InputInfoPtr pInfo, InputInfoPtr subdev) {
+EvdevMultitouchDeleteSubDevice(InputInfoPtr pInfo, InputInfoPtr subdev)
+{
     /* We need to explicitely flush the events so as not deleting
      * a device that still has events in queue
      */

@@ -1,3 +1,54 @@
+xserver-xorg-input-evdev-multitouch (2.3.2-6slp2+29) unstable; urgency=low
+
+  * Fix CFLAGS in .spec file (add omitted MACRO defininitions)
+  * Git: slp/pkgs/xorg/driver/xserver-xorg-input-evdev-multitouch
+  * Tag: xserver-xorg-input-evdev-multitouch_2.3.2-6slp2+29
+
+ -- Sung-Jin Park <sj76.park@samsung.com>  Fri, 15 Jun 2012 14:27:31 +0900
+
+xserver-xorg-input-evdev-multitouch (2.3.2-6slp2+28) unstable; urgency=low
+
+  * Modify to apply input transformation matrix per device
+  * Git: slp/pkgs/xorg/driver/xserver-xorg-input-evdev-multitouch
+  * Tag: xserver-xorg-input-evdev-multitouch_2.3.2-6slp2+28
+
+ -- Sung-Jin Park <sj76.park@samsung.com>  Fri, 01 Jun 2012 11:22:26 +0900
+
+xserver-xorg-input-evdev-multitouch (2.3.2-6slp2+27) unstable; urgency=low
+
+  * Modify EvdevMultitouchPreInit() not to override device name
+    if it's name contains "Virtual".
+  * Git: slp/pkgs/xorg/driver/xserver-xorg-input-evdev-multitouch
+  * Tag: xserver-xorg-input-evdev-multitouch_2.3.2-6slp2+27
+
+ -- Sung-Jin Park <sj76.park@samsung.com>  Thu, 24 May 2012 13:59:39 +0900
+
+xserver-xorg-input-evdev-multitouch (2.3.2-6slp2+26) unstable; urgency=low
+
+  * do not install libtool files
+  * Git: slp/pkgs/xorg/driver/xserver-xorg-input-evdev-multitouch
+  * Tag: xserver-xorg-input-evdev-multitouch_2.3.2-6slp2+26
+
+ -- SooChan Lim <sc1.lim@samsung.com>  Fri, 18 May 2012 09:25:48 +0900
+
+xserver-xorg-input-evdev-multitouch (2.3.2-5slp2+26) unstable; urgency=low
+
+  * Add _F_SUPPORT_PREFERRED_NAME_ to assign preferred name to touchscreen device(s)
+  * If _F_SUPPORT_PREFERRED_NAME_ is included in CFLAGS, original device name will be ignored.
+  * If the value of "PreferredName" option is none/empty, "Touchscreen *" will be assigned as device(s) name.
+  * Git: slp/pkgs/xorg/driver/xserver-xorg-input-evdev-multitouch
+  * Tag: xserver-xorg-input-evdev-multitouch_2.3.2-5slp2+26
+
+ -- Sung-Jin Park <sj76.park@samsung.com>  Tue, 15 May 2012 19:56:04 +0900
+
+xserver-xorg-input-evdev-multitouch (2.3.2-5slp2+25) unstable; urgency=low
+
+  * Emulate SYN_REPORT event when current slot id has been changed
+  * Git: slp/pkgs/xorg/driver/xserver-xorg-input-evdev-multitouch
+  * Tag: xserver-xorg-input-evdev-multitouch_2.3.2-5slp2+25
+
+ -- Sung-Jin Park <sj76.park@samsung.com>  Wed, 04 Jan 2012 15:50:59 +0900
+
 xserver-xorg-input-evdev-multitouch (2.3.2-5slp2+24) unstable; urgency=low
 
   * Add EvdevMultitouchFrameSync() and related data structures for supporting X gesture driver
@@ -32,7 +83,7 @@ xserver-xorg-input-evdev-multitouch (2.3.2-5slp2+21) unstable; urgency=low
 
 xserver-xorg-input-evdev-multitouch (2.3.2-5slp2+20) unstable; urgency=low
 
-  * [X11R7.6] upgrade package 
+  * [X11R7.6] upgrade package
   * Git: 165.213.180.234:slp/pkgs/xorg/driver/xserver-xorg-input-evdev-multitouch
   * Tag: xserver-xorg-input-evdev-multitouch_2.3.2-5slp2+20
 
@@ -74,7 +125,7 @@ xserver-xorg-input-evdev-multitouch (2.3.2-5slp2+16) unstable; urgency=low
 
 xserver-xorg-input-evdev-multitouch (2.3.2-5slp2+15) unstable; urgency=low
 
-  * Add a macro _F_IGNORE_TSP_RESOLUTION_ to ignore TSP resolution when 
+  * Add a macro _F_IGNORE_TSP_RESOLUTION_ to ignore TSP resolution when
     resolution was not specified in input.conf of Xorg server
   * Git: 165.213.180.234:/git/slp/pkgs/xorg/driver/xserver-xorg-input-evdev-multitouch
   * Tag: xserver-xorg-input-evdev-multitouch_2.3.2-5slp2+15
