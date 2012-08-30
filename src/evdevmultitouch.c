@@ -57,8 +57,6 @@
 #include <xkbsrv.h>
 
 #include "evdevmultitouch.h"
-#include "vsync_input_protocol.h"
-#include "vsync_debug_info.h"
 
 #ifdef HAVE_PROPERTIES
 #include <X11/Xatom.h>
@@ -158,8 +156,6 @@ static const char *evdevmultitouchDefaults[] = {
     NULL
 };
 
-int poll_control(char cmd);
-void sync_poll(int vsync_counter);
 #ifdef _F_GESTURE_EXTENSION_
 extern void mieqEnqueue(DeviceIntPtr pDev, InternalEvent *e);
 static void EvdevMultitouchFrameSync(InputInfoPtr pInfo, MTSyncType sync);
@@ -175,7 +171,6 @@ static void EvdevMultitouchFakeOmittedEvents(InputInfoPtr pInfo);
 static void EvdevMultitouchProcessEvent(InputInfoPtr pInfo, struct input_event *ev);
 static void EvdevMultitouchEndOfMultiTouch(InputInfoPtr pInfo,EvdevMultitouchDataMTPtr pData);
 static void EvdevMultitouchSetMultitouch(InputInfoPtr pInfo, int num_multitouch);
-static void EvdevMultitouchSetUsePoll(InputInfoPtr pInfo, BOOL use_poll);
 static void EvdevMultitouchGetGrabInfo(InputInfoPtr pInfo, BOOL val);
 static void EvdevMultitouchSetResolution(InputInfoPtr pInfo, int num_resolution, int resolution[4]);
 static void EvdevMultitouchSetCalibration(InputInfoPtr pInfo, int num_calibration, int calibration[4]);
@@ -198,38 +193,12 @@ static Atom prop_axis_label = 0;
 static Atom prop_btn_label = 0;
 static Atom prop_tracking_id = 0;
 static Atom prop_multitouch = 0;
-static Atom prop_use_poll = 0;
 static Atom prop_transform = 0;
 static Atom prop_grabinfo = 0;
 #endif
 
-static InputInfoPtr pCreatorInfo = NULL;
-volatile VSYNC_INPUT_DISPATCH_TABLE *vsync_input_table = NULL;
-
-int g_syspoll_fd = -1;
 int g_pressed = 0;
-
-int
-poll_control(char cmd)
-{
-	if( g_syspoll_fd < 0 )
-		return 0;
-
-	write(g_syspoll_fd, &cmd, 1);
-
-	return 1;
-}
-
-void
-sync_poll(int vsync_counter)
-{
- 	if( g_pressed )
-	{
-		vsync_debug_set_slot("Poll before");
-		poll_control(POLL_REQUEST);
-		vsync_debug_set_slot("Poll after");
-	}
-}
+static InputInfoPtr pCreatorInfo = NULL;
 
 /* All devices the evdevmultitouch driver has allocated and knows about.
  * MAXDEVICES is safe as null-terminated array, as two devices (VCP and VCK)
@@ -919,11 +888,6 @@ EvdevMultitouchPostMTMotionEvents(InputInfoPtr pInfo,struct input_event *ev)
 #ifdef _F_GESTURE_EXTENSION_
 		  	   EvdevMultitouchFrameSync(pInfo, MTOUCH_FRAME_SYNC_BEGIN);
 #endif//_F_GESTURE_EXTENSION_
-		          if(vsync_input_table)
-	                 {
-				vsync_input_table->start_sync(vsync_input_table->sync_arg);
-				vsync_debug_start();
-		   	    }
 			}
                     EvdevMultitouchQueueButtonEvent(pSubdev, 1, 1);
                     pEvdevMultitouchSubdev->touch_state = 1;
@@ -936,11 +900,6 @@ EvdevMultitouchPostMTMotionEvents(InputInfoPtr pInfo,struct input_event *ev)
 		  if( !num_of_pressed )
 		  {
 			g_pressed = 0;
-		       if(vsync_input_table)
-			{
-				vsync_input_table->stop_sync(vsync_input_table->sync_arg);
-				vsync_debug_stop();
-			}
 		  }
                 EvdevMultitouchQueueButtonEvent(pSubdev, 1, 0);
                 pEvdevMultitouchSubdev->touch_state = 0;
@@ -995,21 +954,11 @@ EvdevMultitouchPostMTMotionEventsBySingle(InputInfoPtr pInfo,struct input_event 
 #ifdef _F_GESTURE_EXTENSION_
 		  EvdevMultitouchFrameSync(pInfo, MTOUCH_FRAME_SYNC_BEGIN);
 #endif//_F_GESTURE_EXTENSION_
-		  if(vsync_input_table)
-                {
-			vsync_input_table->start_sync(vsync_input_table->sync_arg);
-                        vsync_debug_start();
-	   	   }
             }
         }
         else
         {
 	     g_pressed = 0;
-	     if(vsync_input_table)
-	     {
-		   vsync_input_table->stop_sync(vsync_input_table->sync_arg);
-                   vsync_debug_stop();
-	     }
             EvdevMultitouchQueueButtonEvent(pSubdev, 1, 0);
             pEvdevMultitouchSubdev->touch_state = 0;
             pEvdevMultitouchSubdev->evtime = 0;
@@ -1216,8 +1165,6 @@ EvdevMultitouchProcessSyncEvent(InputInfoPtr pInfo, struct input_event *ev)
         }
     } else {
         EvdevMultitouchProcessValuators(pInfo, v, &num_v, &first_v);
-
-	 vsync_debug_set_slot("Input %d %d %d", 1, v[0], v[1]);
 
         EvdevMultitouchPostRelativeMotionEvents(pInfo, &num_v, &first_v, v);
         EvdevMultitouchPostAbsoluteMotionEvents(pInfo, &num_v, &first_v, v);
@@ -2363,11 +2310,6 @@ EvdevMultitouchOn(DeviceIntPtr device)
 	 pEvdevMultitouch->multitouch_setting_timer = TimerSet(pEvdevMultitouch->multitouch_setting_timer, 0, 100, EvdevMultitouchMultitouchSettingTimer, pInfo);
     }
 
-    if( pEvdevMultitouch->use_poll != TRUE )
-		return Success;
-
-    EvdevMultitouchSetUsePoll(pInfo, TRUE);
-
     return Success;
 }
 
@@ -2379,11 +2321,6 @@ EvdevMultitouchOff(DeviceIntPtr device)
 
 	pInfo = device->public.devicePrivate;
 	pEvdevMultitouch = pInfo->private;
-
-    if( pEvdevMultitouch->use_poll != TRUE )
-		return;
-
-    EvdevMultitouchSetUsePoll(pInfo, FALSE);
 }
 
 static int
@@ -2439,7 +2376,10 @@ EvdevMultitouchProc(DeviceIntPtr device, int what)
                     break;
                 }
             }
-            xf86RemoveEnabledDevice(pInfo);
+            if (pInfo->fd >= 0)
+            {
+                xf86RemoveEnabledDevice(pInfo);
+            }
         }
         pEvdevMultitouch->min_maj = 0;
         pEvdevMultitouch->flags &= ~EVDEVMULTITOUCH_INITIALIZED;
@@ -2923,63 +2863,6 @@ EvdevMultitouchSetMultitouch(InputInfoPtr pInfo, int num_multitouch) {
     	    ErrorF("[X11][%s] Failed to Change device property !\n", __FUNCTION__);
 }
 
-static void
-EvdevMultitouchSetUsePoll(InputInfoPtr pInfo, BOOL use_poll)
-{
-	EvdevMultitouchPtr pEvdevMultitouch = pInfo->private;
-	
-	if( use_poll == TRUE )
-	{
-		if( !EvdevMultitouchIsCoreDevice(pInfo) )//master only
-			goto out;
-	
-		if( !vsync_input_table)
-		{
-			vsync_input_table = vsync_input_init();
-			if( !vsync_input_table )
-			{
-				ErrorF("[SetUsePoll] Failed to init vsync input ...\n");
-				goto out;
-			}
-		}
-		
-		g_syspoll_fd = open(SYSFS_POLL, O_WRONLY);
-		if( g_syspoll_fd < 0 )
-		{
-			g_syspoll_fd = -1;
-			ErrorF("[SetUsePoll] Failed to open %s ...\n", SYSFS_POLL);
-			goto out;
-		}
-		
-		vsync_input_table->sync = sync_poll;
-		vsync_input_table->stop_sync(vsync_input_table->sync_arg);
-		poll_control(POLL_ENABLE);
-		pEvdevMultitouch->use_poll = use_poll;
-	}
-	else if( use_poll == FALSE )
-	{
-		if( !EvdevMultitouchIsCoreDevice(pInfo) )//master only
-			goto out;
-		
-		if( !vsync_input_table)
-			goto out;
-		
-		vsync_input_table->stop_sync(vsync_input_table->sync_arg);
-		vsync_input_table->sync = NULL;
-		vsync_input_close(vsync_input_table);
-		vsync_input_table = NULL;
-		poll_control(POLL_DISABLE);
-		close(g_syspoll_fd);
-		g_syspoll_fd = -1;
-		pEvdevMultitouch->use_poll = use_poll;
-	}
-	else
-		ErrorF("\n[SetUsePoll] Unknown value for use_poll (%d)\n", use_poll);
-
-out:
-	return;
-}
-
 Bool
 IsMaster(DeviceIntPtr dev)
 {
@@ -3179,7 +3062,6 @@ EvdevMultitouchPreInit(InputDriverPtr drv, InputInfoPtr pInfo, int flags)
         pEvdevMultitouch->invert_y = xf86SetBoolOption(pInfo->options, "InvertY", FALSE);
         pEvdevMultitouch->num_multitouch = xf86SetIntOption(pInfo->options, "MultiTouch", 0);
         pEvdevMultitouch->swap_axes = xf86SetBoolOption(pInfo->options, "SwapAxes", FALSE);
-        pEvdevMultitouch->use_poll = xf86SetBoolOption(pInfo->options, "UsePoll", FALSE);
 
         str = xf86CheckStrOption(pInfo->options, "Calibration", NULL);
         if (str) {
@@ -3724,14 +3606,6 @@ EvdevMultitouchInitProperty(DeviceIntPtr dev)
 
 	if( EvdevMultitouchIsCoreDevice(pInfo) )//master only
 	{
-		/* flag to use poll */
-		prop_use_poll = MakeAtom(EVDEVMULTITOUCH_PROP_USE_POLL, strlen(EVDEVMULTITOUCH_PROP_USE_POLL), TRUE);
-		rc = XIChangeDeviceProperty(dev, prop_use_poll, XA_INTEGER, 8, PropModeReplace, 1, &pEvdevMultitouch->use_poll, FALSE);
-		if (rc != Success)
-			return;
-
-		XISetDevicePropertyDeletable(dev, prop_use_poll, FALSE);
-
 		/* matrix to transform */
 		prop_transform = MakeAtom(EVDEVMULTITOUCH_PROP_TRANSFORM, strlen(EVDEVMULTITOUCH_PROP_TRANSFORM),  TRUE);
 		rc = XIChangeDeviceProperty(dev, prop_transform, XIGetKnownProperty(XATOM_FLOAT), 32, PropModeReplace, 9, pEvdevMultitouch->transform, FALSE);
@@ -3846,18 +3720,7 @@ EvdevMultitouchSetProperty(DeviceIntPtr dev, Atom atom, XIPropertyValuePtr val,
             if (pEvdevMultitouch->num_multitouch != data)
                 EvdevMultitouchSetMultitouch(pInfo,data);
         }
-    } else if (atom == prop_use_poll)
-    {
-        BOOL data;
-        if (val->format != 8 || val->type != XA_INTEGER || val->size != 1)
-            return BadMatch;
-        if (!checkonly) {
-            data = *((BOOL*)val->data);
-            if (pEvdevMultitouch->use_poll != data)
-		  EvdevMultitouchSetUsePoll(pInfo,(BOOL)data);
-        }
-    }
-    else if (atom == prop_transform)
+    } else if (atom == prop_transform)
     {
         float *f;
         if (val->format != 32 || val->type != XIGetKnownProperty(XATOM_FLOAT) || val->size != 9)

@@ -132,13 +132,11 @@ union _InternalEvent {
 #define MAX_VALUATORS 36
 #endif
 
-#define MAX_VALUATORS_MT 5 //currently if MAXDEVICES == 40
-
+#define MAX_VALUATORS_MT 10
 #define DEFAULT_TIMEOUT 100
 
 #define EVDEVMULTITOUCH_PROP_TRACKING_ID "EvdevMultitouch Tracking ID"
 #define EVDEVMULTITOUCH_PROP_MULTITOUCH_SUBDEVICES "EvdevMultitouch MultiTouch"
-#define EVDEVMULTITOUCH_PROP_USE_POLL	"EvdevMultitouch Use Poll"
 #define EVDEVMULTITOUCH_PROP_TRANSFORM	"EvdevMultitouch Transform Matrix"
 #define EVDEVMULTITOUCH_PROP_GRABINFO	"EvdevMultitouch Grab Info"
 
@@ -290,7 +288,6 @@ typedef struct {
     BOOL mt_slot_supported;
     BOOL sync_mt;
     BOOL associated;
-    BOOL use_poll;//polling_with_vsync
 
     float transform[9];
     BOOL use_transform;
