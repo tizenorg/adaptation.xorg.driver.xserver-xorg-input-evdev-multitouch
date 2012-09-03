@@ -12,6 +12,7 @@ BuildRequires:  pkgconfig(xproto)
 BuildRequires:  pkgconfig(randrproto)
 BuildRequires:  pkgconfig(inputproto)
 BuildRequires:  pkgconfig(kbproto)
+BuildRequires:  pkgconfig(resourceproto)
 BuildRequires:  pkgconfig(xkbfile)
 
 %description
