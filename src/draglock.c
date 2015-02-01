@@ -153,6 +153,8 @@ EvdevMultitouchDragLockPreInit(InputInfoPtr pInfo)
         if (next_num != NULL && *next_num == '\0')
             next_num = NULL;
     }
+
+    free(option_string);
 }
 
 /* Updates DragLock button state and fires button event messges */

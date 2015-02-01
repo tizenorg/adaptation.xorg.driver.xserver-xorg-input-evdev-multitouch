@@ -1,8 +1,8 @@
 #sbs-git:slp/pkgs/xorg/driver/xserver-xorg-input-evdev-multitouch xserver-xorg-input-evdev-multitouch 2.3.2 b89f300e6969a0b8cef3bbe5720ec5300baf4ad3
 Name:	xorg-x11-drv-evdev-multitouch
 Summary:    X.Org evdev multitouch input driver.
-Version: 2.3.8
-Release:    4
+Version: 2.3.14
+Release:    1
 VCS:        adaptation/xorg/driver/xserver-xorg-input-evdev-multitouch#REBASE-12-ge51bbb2836008916253c638ba0dc81875d6571da
 Group:      TO_BE/FILLED_IN
 License:    TO BE FILLED IN
@@ -40,7 +40,12 @@ This package contains xorg evdev multitouch development files
 %setup -q
 
 %build
-export CFLAGS+=" -Wall -g -D_F_SUPPORT_PREFERRED_NAME_ -D_F_GESTURE_EXTENSION_ -D_F_SUPPORT_ROTATION_ANGLE_ -D_F_INVERT_XY_FOR_MULTITOUCH_ -D_F_SWAP_AXES_FOR_MULTITOUCH_ "
+export CFLAGS+=" -Wall -g -D_F_SUPPORT_PREFERRED_NAME_ -D_F_GESTURE_EXTENSION_ "
+%if "%{?tizen_profile_name}" == "mobile"
+export CFLAGS+=" -D_ENV_MOBILE_"
+%elseif "%{?tizen_profile_name}" == "wearable"
+export CFLAGS+=" -D_F_SUPPORT_ROTATION_ANGLE_ -D_F_INVERT_XY_FOR_MULTITOUCH_ -D_F_SWAP_AXES_FOR_MULTITOUCH_ -D_ENV_WEARABLE_ "
+%endif
 
 %autogen -i -v -f
 %configure --disable-static

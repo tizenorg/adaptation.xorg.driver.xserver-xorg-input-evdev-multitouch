@@ -72,7 +72,8 @@
 typedef enum _MTSyncType
 {
 	MTOUCH_FRAME_SYNC_END,
-	MTOUCH_FRAME_SYNC_BEGIN
+	MTOUCH_FRAME_SYNC_BEGIN,
+	MTOUCH_FRAME_SYNC_UPDATE
 } MTSyncType;
 
 enum EventType
@@ -103,6 +104,11 @@ union _InternalEvent {
 	} any;
 	AnyEvent any_event;
 };
+
+#define GESTURE_DEV_NAME "Gesture"
+/* Gesture driver will query devices information
+  * if a gesture driver's control function is called using DEVICE_READY*/
+#define DEVICE_READY 11
 #endif//_F_GESTURE_EXTENSION_
 
 #ifndef EV_CNT /* linux 2.4 kernels and earlier lack _CNT defines */
@@ -134,6 +140,7 @@ union _InternalEvent {
 
 #define MAX_VALUATORS_MT 10
 #define DEFAULT_TIMEOUT 100
+#define NUM_RESOLUTION 4
 
 #define EVDEVMULTITOUCH_PROP_TRACKING_ID "EvdevMultitouch Tracking ID"
 #define EVDEVMULTITOUCH_PROP_MULTITOUCH_SUBDEVICES "EvdevMultitouch MultiTouch"
@@ -197,6 +204,8 @@ typedef struct {
     int vals[MAX_VALUATORS];
     int old_vals[MAX_VALUATORS]; /* Translate absolute inputs to relative */
     EvdevMultitouchDataMTRec vals_mt[MAX_VALUATORS_MT];
+    int vals_tools[MAX_VALUATORS_MT];
+    int real_id;
 
     int flags;
     int tool;
