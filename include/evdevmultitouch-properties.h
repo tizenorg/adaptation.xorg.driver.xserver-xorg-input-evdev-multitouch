@@ -92,4 +92,12 @@
 /* BOOL */
 #define EVDEVMULTITOUCH_PROP_SWAP_AXES "EvdevMultitouch Axes Swap"
 
+/* Real/fake Rotation angle of a touch device */
+/* CARD8, value range 0-3 : 0(0), 1 (90), 3(180), 2(270) */
+#define EVDEVMULTITOUCH_PROP_ROTATION_ANGLE "EvdevMultitouch Rotation Angle"
+
+/* File descriptor value of rotation device node to control TSP rotation origin */
+/* CARD32, value will be between file descriptors range */
+#define EVDEVMULTITOUCH_PROP_ROTATION_NODE "EvdevMultitouch Rotation Node"
+
 #endif

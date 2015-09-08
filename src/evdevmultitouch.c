@@ -99,6 +99,8 @@
 #define False FALSE
 #endif
 
+#define MAX_MT	10
+
 #define POLL_DISABLE	'0'
 #define POLL_ENABLE		'1'
 #define POLL_REQUEST	'2'
@@ -115,6 +117,22 @@
 #define ABS_MT_TOOL_TYPE	0x37	/* Type of touching device */
 #define ABS_MT_BLOB_ID		0x38	/* Group a set of packets as a blob */
 #define ABS_MT_TRACKING_ID		0x39	/* Unique ID of initiated contact */
+
+#ifndef ABS_MT_PRESSURE
+#define ABS_MT_PRESSURE		0x3a	/* Pressure on contact area */
+#endif
+
+#ifndef ABS_MT_DISTANCE
+#define ABS_MT_DISTANCE		0x3b	/* Contact hover distance */
+#endif
+
+#ifndef ABS_MT_ANGLE
+#define ABS_MT_ANGLE		0x3c	/* touch angle */
+#endif
+
+#ifndef ABS_MT_PALM
+#define ABS_MT_PALM			0x3d	/* palm touch */
+#endif
 
 #define SYN_REPORT		0
 #define SYN_CONFIG		1
@@ -155,11 +173,11 @@ static const char *evdevmultitouchDefaults[] = {
     "XkbLayout",    "us",
     NULL
 };
-
 #ifdef _F_GESTURE_EXTENSION_
 extern void mieqEnqueue(DeviceIntPtr pDev, InternalEvent *e);
 static void EvdevMultitouchFrameSync(InputInfoPtr pInfo, MTSyncType sync);
 #endif//_F_GESTURE_EXTENSION_
+extern ScreenPtr miPointerCurrentScreen(void);
 static void EvdevMultitouchOff(DeviceIntPtr device);
 static int EvdevMultitouchOn(DeviceIntPtr);
 static int EvdevMultitouchCacheCompare(InputInfoPtr pInfo, BOOL compare);
@@ -172,12 +190,18 @@ static void EvdevMultitouchProcessEvent(InputInfoPtr pInfo, struct input_event *
 static void EvdevMultitouchEndOfMultiTouch(InputInfoPtr pInfo,EvdevMultitouchDataMTPtr pData);
 static void EvdevMultitouchSetMultitouch(InputInfoPtr pInfo, int num_multitouch);
 static void EvdevMultitouchGetGrabInfo(InputInfoPtr pInfo, BOOL val);
-static void EvdevMultitouchSetResolution(InputInfoPtr pInfo, int num_resolution, int resolution[4]);
+static void EvdevMultitouchSetResolution(InputInfoPtr pInfo, int num_resolution, int width, int height);
 static void EvdevMultitouchSetCalibration(InputInfoPtr pInfo, int num_calibration, int calibration[4]);
 static InputInfoPtr EvdevMultitouchCreateSubDevice(InputInfoPtr pInfo, int id);
 static void EvdevMultitouchDeleteSubDevice(InputInfoPtr pInfo, InputInfoPtr subdev);
 static void EvdevMultitouchSwapAxes(EvdevMultitouchPtr pEvdevMultitouch);
 static void EvdevMultitouchSetTransform(InputInfoPtr pInfo, int num_transform, float *tmatrix);
+#ifdef _F_SUPPORT_ROTATION_ANGLE_
+static void EvdevMultitouchSetRotationAngle(EvdevMultitouchPtr pEvdevMultitouch, int angle);
+#endif
+#ifdef _F_INVERT_XY_FOR_MULTITOUCH_
+static void EvdevMultitouchSetInvertXY(EvdevMultitouchPtr pEvdevMultitouch, BOOL* inverts);
+#endif
 
 #ifdef HAVE_PROPERTIES
 static void EvdevMultitouchInitAxesLabels(EvdevMultitouchPtr pEvdevMultitouch, int natoms, Atom *atoms);
@@ -195,6 +219,10 @@ static Atom prop_tracking_id = 0;
 static Atom prop_multitouch = 0;
 static Atom prop_transform = 0;
 static Atom prop_grabinfo = 0;
+#ifdef _F_SUPPORT_ROTATION_ANGLE_
+static Atom prop_rotation_angle = 0;
+static Atom prop_rotation_node = 0;
+#endif
 #endif
 
 int g_pressed = 0;
@@ -203,7 +231,7 @@ static InputInfoPtr pCreatorInfo = NULL;
 /* All devices the evdevmultitouch driver has allocated and knows about.
  * MAXDEVICES is safe as null-terminated array, as two devices (VCP and VCK)
  * cannot be used by evdevmultitouch, leaving us with a space of 2 at the end. */
-static EvdevMultitouchPtr evdevmultitouch_devices[MAXDEVICES] = {NULL};
+static EvdevMultitouchPtr evdevmultitouch_devices[MAX_MT] = {NULL,};
 
 static size_t EvdevMultitouchCountBits(unsigned long *array, size_t nlongs)
 {
@@ -250,18 +278,22 @@ EvdevMultitouchIsCoreDevice(InputInfoPtr pInfo) {
 static BOOL
 EvdevMultitouchIsDuplicate(InputInfoPtr pInfo)
 {
+    int i;
     EvdevMultitouchPtr pEvdevMultitouch = pInfo->private;
-    EvdevMultitouchPtr* dev   = evdevmultitouch_devices;
+    EvdevMultitouchPtr dev;
 
     if (pEvdevMultitouch->min_maj)
     {
-        while(*dev)
+        for(i = 0 ; i < MAX_MT ; i++)
         {
-            if ((*dev) != pEvdevMultitouch &&
-                (*dev)->min_maj &&
-                (*dev)->min_maj == pEvdevMultitouch->min_maj)
-                return TRUE;
-            dev++;
+        	dev = evdevmultitouch_devices[i];
+        	if(dev)
+    		{
+			if ((dev) != pEvdevMultitouch &&
+			     (dev)->min_maj &&
+			     (dev)->min_maj == pEvdevMultitouch->min_maj)
+				return TRUE;
+    		}
         }
     }
     return FALSE;
@@ -273,13 +305,19 @@ EvdevMultitouchIsDuplicate(InputInfoPtr pInfo)
 static void
 EvdevMultitouchAddDevice(InputInfoPtr pInfo)
 {
+    int i;
     EvdevMultitouchPtr pEvdevMultitouch = pInfo->private;
-    EvdevMultitouchPtr* dev = evdevmultitouch_devices;
+    EvdevMultitouchPtr dev;
 
-    while(*dev)
-        dev++;
-
-    *dev = pEvdevMultitouch;
+    for(i = 0 ; i < MAX_MT ; i++)
+    {
+    	dev = evdevmultitouch_devices[i];
+	if(!dev)
+	{
+		evdevmultitouch_devices[i] = pEvdevMultitouch;
+		return;
+	}
+    }
 }
 
 /**
@@ -288,20 +326,18 @@ EvdevMultitouchAddDevice(InputInfoPtr pInfo)
 static void
 EvdevMultitouchRemoveDevice(InputInfoPtr pInfo)
 {
+    int i;
     EvdevMultitouchPtr pEvdevMultitouch = pInfo->private;
-    EvdevMultitouchPtr *dev   = evdevmultitouch_devices;
-    int count       = 0;
+    EvdevMultitouchPtr dev;
 
-    while(*dev)
+    for( i = 0 ; i < MAX_MT ; i++ )
     {
-        count++;
-        if (*dev == pEvdevMultitouch)
-        {
-            memmove(dev, dev + 1,
-                    sizeof(evdevmultitouch_devices) - (count * sizeof(EvdevMultitouchPtr)));
-            break;
-        }
-        dev++;
+    	dev = evdevmultitouch_devices[i];
+	if((dev) && (dev == pEvdevMultitouch))
+	{
+		evdevmultitouch_devices[i] = NULL;
+		break;
+	}
     }
 }
 
@@ -415,7 +451,7 @@ EvdevMultitouchQueueButtonClicks(InputInfoPtr pInfo, int button, int count)
 }
 
 /**
- * 
+ *
  */
 static CARD32
 EvdevMultitouchSubdevTimer(OsTimerPtr timer, CARD32 time, pointer arg)
@@ -423,13 +459,13 @@ EvdevMultitouchSubdevTimer(OsTimerPtr timer, CARD32 time, pointer arg)
     InputInfoPtr pInfo = (InputInfoPtr)arg;
     EvdevMultitouchPtr pEvdevMultitouch = pInfo->private;
     int i;
-    
+
     for (i=0;i<pEvdevMultitouch->num_multitouch;i++) {
         if (pEvdevMultitouch->vals_mt[i].containsValues) {
             EvdevMultitouchEndOfMultiTouch(pInfo, &(pEvdevMultitouch->vals_mt[i]));
         }
     }
-    
+
     return 0;
     //return pEvdevMultitouch->timeout; /* come back in 100 ms */
 }
@@ -495,7 +531,7 @@ EvdevMultitouchMultitouchSettingTimer(OsTimerPtr timer, CARD32 time, pointer arg
     if( n_multitouch >= 2 )
 	    EvdevMultitouchSetMultitouch(pInfo, n_multitouch);
     pEvdevMultitouch->multitouch_setting_timer = TimerSet(pEvdevMultitouch->multitouch_setting_timer, 0, 0, NULL, NULL);
-	
+
     return 0;
 }
 
@@ -515,6 +551,9 @@ EvdevMultitouchProcessValuators(InputInfoPtr pInfo, int v[MAX_VALUATORS], int *n
     int tmp;
     EvdevMultitouchPtr pEvdevMultitouch = pInfo->private;
     pixman_vector_t p;
+    EvdevMultitouchDataMTPtr pData;
+    InputInfoPtr pSubdev;
+    EvdevMultitouchPtr pEvdevMultitouchSubdev;
 
     *num_v = *first_v = 0;
 
@@ -613,6 +652,15 @@ EvdevMultitouchProcessValuators(InputInfoPtr pInfo, int v[MAX_VALUATORS], int *n
 		v[0] = pixman_fixed_to_int(p.vector[0]);
 		v[1] = pixman_fixed_to_int(p.vector[1]);
 	}
+	pData = &(pEvdevMultitouch->vals_mt[0]);
+	if (!pData)
+	    return;
+	pSubdev = pData->pInfo;
+	if (!pSubdev)
+	    return;
+	EvdevMultitouchCopyFromData(pSubdev, pData);
+	pEvdevMultitouchSubdev = pSubdev->private;
+	v[pEvdevMultitouch->axis_map[ABS_MT_TOOL_TYPE]] = pEvdevMultitouchSubdev->vals_tools[pEvdevMultitouchSubdev->real_id];
 
         *num_v = pEvdevMultitouch->num_vals;
         *first_v = 0;
@@ -643,7 +691,7 @@ EvdevMultitouchProcessButtonEvent(InputInfoPtr pInfo, struct input_event *ev)
 
     if (pEvdevMultitouch->num_multitouch)
         return;
-    
+
     if (EvdevMultitouchMBEmuFilterEvent(pInfo, button, value))
         return;
 
@@ -733,7 +781,6 @@ EvdevMultitouchProcessAbsoluteMotionEvent(InputInfoPtr pInfo, struct input_event
 #ifdef _DEBUG_MT_SEQUENCE_
 	     ErrorF("[AbsoluteMotionEvent] ABS_MT_POSITION_X (value=%d)\n", value);
 #endif
-	     EvdevMultitouchFakeOmittedEvents(pInfo);
             pEvdevMultitouch->abs |= ABS_MT_X_VALUE;
     	 }
         else if (ev->code == ABS_MT_POSITION_Y)
@@ -741,11 +788,25 @@ EvdevMultitouchProcessAbsoluteMotionEvent(InputInfoPtr pInfo, struct input_event
 #ifdef _DEBUG_MT_SEQUENCE_
 	     ErrorF("[AbsoluteMotionEvent] ABS_MT_POSITION_Y (value=%d)\n", value);
 #endif
-	     EvdevMultitouchFakeOmittedEvents(pInfo);
             pEvdevMultitouch->abs |= ABS_MT_Y_VALUE;
     	 }
+        else if (ev->code == ABS_MT_TOOL_TYPE)
+        {
+            pEvdevMultitouch->abs |= ABS_VALUE;
+            pEvdevMultitouch->vals_tools[pEvdevMultitouch->current_id] = value;
+#ifdef _DEBUG_MT_SEQUENCE_
+            ErrorF("[AbsoluteMotionEvent] ABS_MT_TOOL_TYPE (current_id: %d) (value=%d)\n", pEvdevMultitouch->current_id, value);
+#endif
+        }
         else
             pEvdevMultitouch->abs |= ABS_VALUE;
+        if( pEvdevMultitouch->current_id < 0 )
+        {
+            pEvdevMultitouch->current_id = pEvdevMultitouch->last_slot;
+#ifdef _DEBUG_MT_SEQUENCE_
+            ErrorF("\t...Fake ABS_MT_SLOT (current_id=%d)\n", pEvdevMultitouch->current_id);
+#endif
+        }
     }
     else
     {
@@ -765,7 +826,7 @@ EvdevMultitouchProcessAbsoluteMotionEvent(InputInfoPtr pInfo, struct input_event
     	 }
         else
             pEvdevMultitouch->abs |= ABS_VALUE;
-    }        
+    }
 }
 
 /**
@@ -896,6 +957,8 @@ EvdevMultitouchPostMTMotionEvents(InputInfoPtr pInfo,struct input_event *ev)
             else
             {
 		  num_of_pressed -= (pData->id+1);
+		  if(num_of_pressed < 0)
+		  	num_of_pressed = 0;
 		  /* last finger release */
 		  if( !num_of_pressed )
 		  {
@@ -907,7 +970,7 @@ EvdevMultitouchPostMTMotionEvents(InputInfoPtr pInfo,struct input_event *ev)
             }
         }
         EvdevMultitouchProcessSyncEvent(pSubdev, ev);
-        
+
     }
 }
 
@@ -928,7 +991,7 @@ EvdevMultitouchPostMTMotionEventsBySingle(InputInfoPtr pInfo,struct input_event 
     if (!pData->containsValues) {
         return;
     }
-    
+
     pSubdev = pInfo;
     pData->containsValues = FALSE;
     EvdevMultitouchCopyFromData(pSubdev, pData);
@@ -1048,9 +1111,9 @@ EvdevMultitouchStoreMTData(InputInfoPtr pInfo, EvdevMultitouchDataMTPtr pData) {
     if(pEvdevMultitouch->abs & ABS_MT_X_VALUE)
         x = pEvdevMultitouch->vals[pEvdevMultitouch->axis_map[ABS_MT_POSITION_X]];
     else
-        x = pData->vals[pEvdevMultitouch->axis_map[ABS_X]]; 
-        
-    if(pEvdevMultitouch->abs & ABS_MT_Y_VALUE)    
+        x = pData->vals[pEvdevMultitouch->axis_map[ABS_X]];
+
+    if(pEvdevMultitouch->abs & ABS_MT_Y_VALUE)
         y = pEvdevMultitouch->vals[pEvdevMultitouch->axis_map[ABS_MT_POSITION_Y]];
     else
         y = pData->vals[pEvdevMultitouch->axis_map[ABS_Y]];
@@ -1082,7 +1145,7 @@ EvdevMultitouchProcessMTSyncReport(InputInfoPtr pInfo, struct input_event *ev)
     int id;
 
     id = pEvdevMultitouch->current_id;
-    
+
     if (id < 0) {
         EvdevMultitouchReinitPEvdevMultitouch(pInfo);
         return;
@@ -1102,7 +1165,7 @@ EvdevMultitouchProcessMTSyncReport(InputInfoPtr pInfo, struct input_event *ev)
         {
             EvdevMultitouchReinitPEvdevMultitouch(pInfo);
             return;
-        }      
+        }
     }
 
     EvdevMultitouchStoreMTData(pInfo, &(pEvdevMultitouch->vals_mt[id]));
@@ -1136,7 +1199,7 @@ EvdevMultitouchProcessSyncEvent(InputInfoPtr pInfo, struct input_event *ev)
     int num_v = 0, first_v = 0;
     int v[MAX_VALUATORS];
     EvdevMultitouchPtr pEvdevMultitouch = pInfo->private;
-    
+
     if (ev->code == SYN_MT_REPORT) {
         EvdevMultitouchProcessMTSyncReport(pInfo, ev);
         return;
@@ -1170,11 +1233,11 @@ EvdevMultitouchProcessSyncEvent(InputInfoPtr pInfo, struct input_event *ev)
         EvdevMultitouchPostAbsoluteMotionEvents(pInfo, &num_v, &first_v, v);
         EvdevMultitouchPostQueuedEvents(pInfo, &num_v, &first_v, v);
 #ifdef _F_GESTURE_EXTENSION_
-	if( !g_pressed )
+	if( !g_pressed  && pEvdevMultitouch->last_slot == 0 )
             EvdevMultitouchFrameSync(pInfo, MTOUCH_FRAME_SYNC_END);
 #endif//_F_GESTURE_EXTENSION_
     }
-    
+
     EvdevMultitouchReinitPEvdevMultitouch(pInfo);
 }
 
@@ -1208,7 +1271,7 @@ static char* ev_name(int type, int code, int value)
    char ttype[50];
    char tcode[50];
    char tvalue[50];
-   
+
    switch(type)
    {
    case EV_SYN:
@@ -1278,6 +1341,12 @@ static char* ev_name(int type, int code, int value)
       case ABS_MT_SLOT:
          scode =  "ABS_MT_SLOT";
          break;
+      case ABS_MT_ANGLE:
+         scode =  "ABS_MT_ANGLE";
+         break;
+      case ABS_MT_PALM:
+         scode =  "ABS_MT_PALM";
+         break;
       }
    default:
       break;
@@ -1328,15 +1397,25 @@ static void EvdevMultitouchFakeOmittedEvents(InputInfoPtr pInfo)
 }
 
 static void
+EvdevPostFakeSyncEvent(InputInfoPtr pInfo)
+{
+    struct input_event *ev = calloc(1, sizeof(struct input_event));
+    if (!ev) return;
+    ev->type = EV_SYN;
+    ev->code = SYN_REPORT;
+    ev->value = 0;
+
+    EvdevMultitouchProcessEvent(pInfo, ev);
+}
+
+static void
 EvdevMultitouchProcessEvent(InputInfoPtr pInfo, struct input_event *ev)
 {
     EvdevMultitouchPtr pEvdevMultitouch = pInfo->private;
-	
+
     switch (ev->type) {
         case EV_REL:
             return;
-            EvdevMultitouchProcessRelativeMotionEvent(pInfo, ev);
-            break;
         case EV_ABS:
             switch(ev->code)
             {
@@ -1345,7 +1424,7 @@ EvdevMultitouchProcessEvent(InputInfoPtr pInfo, struct input_event *ev)
             case ABS_PRESSURE:
                 return;
             }
-			
+
 	     if( ev->code == ABS_MT_TRACKING_ID )
 	     {
 #ifdef _DEBUG_MT_SEQUENCE_
@@ -1358,7 +1437,7 @@ EvdevMultitouchProcessEvent(InputInfoPtr pInfo, struct input_event *ev)
 		         {
 				pEvdevMultitouch->current_id = pEvdevMultitouch->last_slot;
 		         }
-			  
+
 		         if( 0 > ev->value )//ABS_MT_TRACKING_ID == -1
 	         	  {
 #ifdef _DEBUG_MT_SEQUENCE_
@@ -1366,14 +1445,21 @@ EvdevMultitouchProcessEvent(InputInfoPtr pInfo, struct input_event *ev)
 #endif
 	         	  	pEvdevMultitouch->vals[pEvdevMultitouch->axis_map[ABS_MT_TOUCH_MAJOR]] = 0;
 	         	  	pEvdevMultitouch->abs |= ABS_MT_TOUCH_MAJOR_VALUE;
+#ifdef _ENV_WEARABLE_
+	         	  	EvdevPostFakeSyncEvent(pInfo);
+#endif //_ENV_WEARABLE_
 	         	  }
+                    else
+                    {
+                        EvdevMultitouchFakeOmittedEvents(pInfo);
+                    }
 		  }
 		  else
 		  {//MT protocol A Type
 			  EvdevMultitouchProcessTrackingIDEvent(pInfo, ev);
 		  }
 	     }
-		 
+
             if (ev->code == ABS_MT_SLOT)
 	     {
 #ifdef _DEBUG_MT_SEQUENCE_
@@ -1387,6 +1473,7 @@ EvdevMultitouchProcessEvent(InputInfoPtr pInfo, struct input_event *ev)
 	  	 }
 
                 EvdevMultitouchProcessTrackingIDEvent(pInfo, ev);
+                pEvdevMultitouch->real_id = pEvdevMultitouch->current_id;
             }
 	     else
 	     {
@@ -1395,8 +1482,6 @@ EvdevMultitouchProcessEvent(InputInfoPtr pInfo, struct input_event *ev)
             break;
         case EV_KEY:
             return;
-            EvdevMultitouchProcessKeyEvent(pInfo, ev);
-            break;
         case EV_SYN:
 #ifdef _DEBUG_MT_SEQUENCE_
 	     if( ev->code == SYN_MT_REPORT )
@@ -1405,6 +1490,8 @@ EvdevMultitouchProcessEvent(InputInfoPtr pInfo, struct input_event *ev)
 	     	ErrorF("[ProcessEvent] SYN_REPORT (value=%d)\n", ev->value);
 #endif
             EvdevMultitouchProcessSyncEvent(pInfo, ev);
+            if (g_pressed)
+                EvdevMultitouchFrameSync(pInfo, MTOUCH_FRAME_SYNC_UPDATE);
             break;
     }
 }
@@ -1901,7 +1988,10 @@ EvdevMultitouchAddAbsClass(DeviceIntPtr device)
                                        GetMotionHistory,
 #endif
                                        GetMotionHistorySize(), Absolute))
+    {
+        free(atoms);
         return !Success;
+    }
 
     for (axis = ABS_X; axis <= ABS_MAX; axis++) {
         int axnum = g_pEvdevMultitouch->axis_map[axis];
@@ -2006,7 +2096,10 @@ EvdevMultitouchAddRelClass(DeviceIntPtr device)
                                        GetMotionHistory,
 #endif
                                        GetMotionHistorySize(), Relative))
+    {
+        free(atoms);
         return !Success;
+    }
 
     for (axis = REL_X; axis <= REL_MAX; axis++)
     {
@@ -2052,7 +2145,10 @@ EvdevMultitouchAddButtonClass(DeviceIntPtr device)
                                      labels,
 #endif
                                      pEvdevMultitouch->btnmap))
+    {
+        free(labels);
         return !Success;
+    }
 
     free(labels);
     return Success;
@@ -2102,6 +2198,7 @@ EvdevMultitouchInitButtonMapping(InputInfoPtr pInfo)
             pEvdevMultitouch->btnmap[nbuttons++] = btn;
             mapping = s;
         }
+        free(mapping);
     }
 
     for (i = nbuttons; i < ArrayLength(pEvdevMultitouch->btnmap); i++)
@@ -2282,16 +2379,16 @@ EvdevMultitouchOn(DeviceIntPtr device)
             {
                 xf86Msg(X_WARNING, "%s: Refusing to enable duplicate device.\n",
                         pInfo->name);
-                
+
                 return !Success;
             }
 
             pEvdevMultitouch->reopen_timer = TimerSet(pEvdevMultitouch->reopen_timer, 0, 0, NULL, NULL);
 
             xf86FlushInput(pInfo->fd);
-            
+
             EvdevMultitouchSetMultitouch(pInfo, pEvdevMultitouch->num_multitouch);
-            
+
             finish = True;
         }
     }
@@ -2371,7 +2468,7 @@ EvdevMultitouchProc(DeviceIntPtr device, int what)
             /* removing it in the list of the core device */
             g_pEvdevMultitouch = pEvdevMultitouch->core_device->private;
             for (i=0; i<MAX_VALUATORS_MT; ++i) {
-                if (g_pEvdevMultitouch->vals_mt[i].pInfo == pInfo) {
+                if ( (&g_pEvdevMultitouch->vals_mt[i]) && (g_pEvdevMultitouch->vals_mt[i].pInfo == pInfo) ){
                     g_pEvdevMultitouch->vals_mt[i].pInfo = NULL;
                     break;
                 }
@@ -2390,7 +2487,7 @@ EvdevMultitouchProc(DeviceIntPtr device, int what)
         xf86Msg(X_INFO, "%s: Close\n", pInfo->name);
         if (EvdevMultitouchIsCoreDevice(pInfo)) { // master only
             //EvdevMultitouchDeleteAllSubdevices(pInfo);
-            
+
             if (pInfo->fd != -1) {
                 close(pInfo->fd);
                 pInfo->fd = -1;
@@ -2417,7 +2514,8 @@ EvdevMultitouchCacheCompare(InputInfoPtr pInfo, BOOL compare)
 {
     int i;
     EvdevMultitouchPtr pEvdevMultitouch = pInfo->private;
-    size_t len;
+    int len;
+    char * res;
 
     char name[1024]                  = {0};
     unsigned long bitmask[NLONGS(EV_CNT)]      = {0};
@@ -2510,26 +2608,23 @@ EvdevMultitouchCacheCompare(InputInfoPtr pInfo, BOOL compare)
      * Do not try to validate absinfo data since it is not expected
      * to be static, always refresh it in evdevmultitouch structure.
      */
-	if( !xf86CheckStrOption(pInfo->options, "Resolution", NULL) )
+       res = xf86CheckStrOption(pInfo->options, "Resolution", NULL);
+	if( !res )
 	{
-#ifdef _F_IGNORE_TSP_RESOLUTION_
-	    pEvdevMultitouch->absinfo[ABS_X].maximum = 0;
-	    pEvdevMultitouch->absinfo[ABS_X].minimum = 0;
-	    pEvdevMultitouch->absinfo[ABS_Y].maximum = 0;
-	    pEvdevMultitouch->absinfo[ABS_Y].minimum = 0;
-#else//_F_IGNORE_TSP_RESOLUTION_
 	    for (i = ABS_X; i <= ABS_MAX; i++) {
 	        if (TestBit(i, abs_bitmask)) {
 	            len = ioctl(pInfo->fd, EVIOCGABS(i), &pEvdevMultitouch->absinfo[i]);
 	            if (len < 0) {
 	                xf86Msg(X_ERROR, "%s: ioctl EVIOCGABSi(%d) failed: %s\n",
 	                        pInfo->name, i, strerror(errno));
+	                free(res);
 	                goto error;
 	            }
 	        }
 	    }
-#endif//_F_IGNORE_TSP_RESOLUTION_
 	}
+	else
+	    free(res);
 
     len = ioctl(pInfo->fd, EVIOCGBIT(EV_KEY, sizeof(key_bitmask)), key_bitmask);
     if (len < 0) {
@@ -2782,7 +2877,8 @@ EvdevMultitouchSetCalibration(InputInfoPtr pInfo, int num_calibration, int calib
 }
 
 static void
-EvdevMultitouchSetResolution(InputInfoPtr pInfo, int num_resolution, int resolution[4])
+EvdevMultitouchSetResolution(InputInfoPtr pInfo, int num_resolution, int width, int height)
+
 {
     EvdevMultitouchPtr pEvdevMultitouch = pInfo->private;
 
@@ -2794,10 +2890,10 @@ EvdevMultitouchSetResolution(InputInfoPtr pInfo, int num_resolution, int resolut
         pEvdevMultitouch->resolution.max_y = 0;
     } else if (num_resolution == 4) {
         pEvdevMultitouch->flags |= EVDEVMULTITOUCH_RESOLUTION;
-        pEvdevMultitouch->resolution.min_x = resolution[0];
-        pEvdevMultitouch->resolution.max_x = resolution[1];
-        pEvdevMultitouch->resolution.min_y = resolution[2];
-        pEvdevMultitouch->resolution.max_y = resolution[3];
+        pEvdevMultitouch->resolution.min_x = 0;
+        pEvdevMultitouch->resolution.max_x = width;
+        pEvdevMultitouch->resolution.min_y = 0;
+        pEvdevMultitouch->resolution.max_y = height;
     }
 }
 
@@ -2827,10 +2923,10 @@ EvdevMultitouchSetMultitouch(InputInfoPtr pInfo, int num_multitouch) {
     EvdevMultitouchPtr pEvdevMultitouch = pInfo->private;
     int i, rc;
 
-    if( !(pEvdevMultitouch->flags & EVDEVMULTITOUCH_MULTITOUCH) ) 
-    { 
-            ErrorF("[X11][%s] Device is not a multitouch screen !(flags=%d)\n", __FUNCTION__, pEvdevMultitouch->flags); 
-            return; 
+    if( !(pEvdevMultitouch->flags & EVDEVMULTITOUCH_MULTITOUCH) )
+    {
+            ErrorF("[X11][%s] Device is not a multitouch screen !(flags=%d)\n", __FUNCTION__, pEvdevMultitouch->flags);
+            return;
     }
 
     if (num_multitouch > MAX_VALUATORS_MT)
@@ -2853,14 +2949,28 @@ EvdevMultitouchSetMultitouch(InputInfoPtr pInfo, int num_multitouch) {
             pEvdevMultitouch->vals_mt[i].pInfo = NULL;
         }
     }
-    
+
     pEvdevMultitouch->num_multitouch = num_multitouch;
 
-    rc = XIChangeDeviceProperty(pInfo->dev, prop_multitouch, XA_INTEGER, 8, 
+    rc = XIChangeDeviceProperty(pInfo->dev, prop_multitouch, XA_INTEGER, 8,
 		PropModeReplace, 1, &pEvdevMultitouch->num_multitouch, FALSE);
 
     if (rc != Success)
     	    ErrorF("[X11][%s] Failed to Change device property !\n", __FUNCTION__);
+
+#ifdef _F_GESTURE_EXTENSION_
+    DeviceIntPtr dev;
+    for (dev = inputInfo.devices; dev; dev = dev->next)
+    {
+        if(!strncmp(dev->name, GESTURE_DEV_NAME, sizeof(GESTURE_DEV_NAME)-1))
+        {
+            InputInfoPtr gestureInfo = dev->public.devicePrivate;
+            ErrorF("[EvdevMultitouchSetMultitouch][id:%d] find device (%s)\n", dev->id, dev->name);
+            gestureInfo->device_control(dev, DEVICE_READY);
+            break;
+        }
+    }
+#endif //_F_GESTURE_EXTENSION_
 }
 
 Bool
@@ -2946,11 +3056,11 @@ EvdevMultitouchPreInit(InputDriverPtr drv, InputInfoPtr pInfo, int flags)
     int rc = BadAlloc;
     const char *device, *str;
     int num_calibration = 0, calibration[4] = { 0, 0, 0, 0 };
-    int num_resolution = 0, resolution[4] = { 0, 0, 0, 0 };
+    int num_resolution = 0;
     int num_transform = 0; float tr[9];
-    EvdevMultitouchPtr pEvdevMultitouch;
-    char *type;
-    char *name;
+    EvdevMultitouchPtr pEvdevMultitouch = NULL;
+    char *type = NULL;
+    char *name = NULL;
 
     if(!pInfo)
     {
@@ -2969,6 +3079,7 @@ EvdevMultitouchPreInit(InputDriverPtr drv, InputInfoPtr pInfo, int flags)
         goto error;
 
     pInfo->private = pEvdevMultitouch;
+    memset(evdevmultitouch_devices, 0, sizeof(EvdevMultitouchPtr) * MAX_MT);
 
     xf86CollectInputOptions(pInfo, evdevmultitouchDefaults);
     xf86ProcessCommonOptions(pInfo, pInfo->options);
@@ -2992,15 +3103,16 @@ EvdevMultitouchPreInit(InputDriverPtr drv, InputInfoPtr pInfo, int flags)
         }
     }
 #endif//_F_SUPPORT_PREFERRED_NAME_
- 
+
      /* If Type == Object, this is a device for an object to use */
     type = xf86CheckStrOption(pInfo->options, "Type", NULL);
 
     xf86Msg(X_INFO, "%s: EvdevMultitouch Type %s found\n", pInfo->name, type);
-       
+
     if (type != NULL && strcmp(type, "Object") == 0) {
         EvdevMultitouchPtr pCreatorEvdevMultitouch;
         if (!pCreatorInfo){
+            free(type);
             return Success;
         }
         pCreatorEvdevMultitouch = pCreatorInfo->private;
@@ -3019,7 +3131,7 @@ EvdevMultitouchPreInit(InputDriverPtr drv, InputInfoPtr pInfo, int flags)
 
         memset(pEvdevMultitouch->vals, 0, MAX_VALUATORS * sizeof(int));
         memset(pEvdevMultitouch->old_vals, -1, MAX_VALUATORS * sizeof(int));
-        
+
         /*
          * We initialize pEvdevMultitouch->tool to 1 so that device that doesn't use
          * proximity will still report events.
@@ -3053,6 +3165,7 @@ EvdevMultitouchPreInit(InputDriverPtr drv, InputInfoPtr pInfo, int flags)
             xf86Msg(X_WARNING, "%s: device file already in use. Ignoring.\n",
                     pInfo->name);
             close(pInfo->fd);
+            pInfo->fd = -1;
             rc = BadValue;
             goto error;
         }
@@ -3062,6 +3175,25 @@ EvdevMultitouchPreInit(InputDriverPtr drv, InputInfoPtr pInfo, int flags)
         pEvdevMultitouch->invert_y = xf86SetBoolOption(pInfo->options, "InvertY", FALSE);
         pEvdevMultitouch->num_multitouch = xf86SetIntOption(pInfo->options, "MultiTouch", 0);
         pEvdevMultitouch->swap_axes = xf86SetBoolOption(pInfo->options, "SwapAxes", FALSE);
+#ifdef _F_SUPPORT_ROTATION_ANGLE_
+        pEvdevMultitouch->rotation_angle = xf86SetIntOption(pInfo->options, "RotationAngle", 0);
+
+        str = xf86CheckStrOption(pInfo->options, "RotationNode", NULL);
+        if (str)
+        {
+            do {
+            	pEvdevMultitouch->rotation_node = open(str, O_WRONLY, 0);
+            } while (pEvdevMultitouch->rotation_node < 0 && errno == EINTR);
+        }
+        else xf86Msg(X_INFO, "%s: No rotation node exists..\n", pInfo->name);
+
+        if (pEvdevMultitouch->rotation_node < 0) {
+            xf86Msg(X_ERROR, "Unable to open evdevmultitouch rotation_node\"%s\".\n", str);
+            xf86Msg(X_ERROR, "Input rotation will be done inside evdevmultitouch driver.\n");
+            pEvdevMultitouch->rotation_node = 0;
+        }
+        if (str) free(str);
+#endif
 
         str = xf86CheckStrOption(pInfo->options, "Calibration", NULL);
         if (str) {
@@ -3074,19 +3206,35 @@ EvdevMultitouchPreInit(InputDriverPtr drv, InputInfoPtr pInfo, int flags)
                 xf86Msg(X_ERROR,
                         "%s: Insufficient calibration factors (%d). Ignoring calibration\n",
                         pInfo->name, num_calibration);
+            free(str);
         }
 
-        str = xf86CheckStrOption(pInfo->options, "Resolution", NULL);
-        if (str) {
-            num_resolution = sscanf(str, "%d %d %d %d",
-                                     &resolution[0], &resolution[1],
-                                     &resolution[2], &resolution[3]);
-            if (num_resolution == 4)
-                EvdevMultitouchSetResolution(pInfo, num_resolution, resolution);
+        ScreenPtr pScreen = miPointerCurrentScreen();
+        int width = 0, height = 0;
+
+        if (pScreen)
+        {
+            xf86Msg(X_INFO, "screen width = %d\n", pScreen->width);
+            xf86Msg(X_INFO, "screen height = %d\n", pScreen->height);
+
+            if (pScreen->width > 0 && pScreen->height > 0)
+            {
+                width = pScreen->width;
+                height = pScreen->height;
+                num_resolution = NUM_RESOLUTION;
+                EvdevMultitouchSetResolution(pInfo, NUM_RESOLUTION, width, height);
+            }
             else
+            {
+                EvdevMultitouchSetResolution(pInfo, num_resolution, width, height);
                 xf86Msg(X_ERROR,
                         "%s: Insufficient resolution factors (%d). Ignoring resolution\n",
                         pInfo->name, num_resolution);
+            }
+        }
+        else
+        {
+            xf86Msg(X_ERROR, "Fail to get current screen. Ignoring resolution\n");
         }
 
 	 pEvdevMultitouch->use_transform = False;
@@ -3094,7 +3242,7 @@ EvdevMultitouchPreInit(InputDriverPtr drv, InputInfoPtr pInfo, int flags)
         if (str) {
             num_transform = sscanf(str, "%f %f %f %f %f %f %f %f %f",
                                      &tr[0], &tr[1], &tr[2],
-                                     &tr[3], &tr[4], &tr[5], 
+                                     &tr[3], &tr[4], &tr[5],
                                      &tr[6], &tr[7], &tr[8]);
             if (num_transform == 9)
                 EvdevMultitouchSetTransform(pInfo, num_transform, tr);
@@ -3104,6 +3252,7 @@ EvdevMultitouchPreInit(InputDriverPtr drv, InputInfoPtr pInfo, int flags)
                         "%s: Insufficient transform factors (%d). Ignoring transform\n",
                         pInfo->name, num_transform);
             }
+            free(str);
         }
 
         /* Grabbing the event device stops in-kernel event forwarding. In other
@@ -3125,10 +3274,11 @@ EvdevMultitouchPreInit(InputDriverPtr drv, InputInfoPtr pInfo, int flags)
         if (EvdevMultitouchCacheCompare(pInfo, FALSE) ||
             EvdevMultitouchProbe(pInfo)) {
             close(pInfo->fd);
+            pInfo->fd = -1;
             rc = BadValue;
             goto error;
         }
-        
+
         if ((pEvdevMultitouch->flags & EVDEVMULTITOUCH_MULTITOUCH) && !pEvdevMultitouch->num_buttons) {
             /* absolute multitouch screen :
              * forcing num_buttons = 1
@@ -3141,21 +3291,13 @@ EvdevMultitouchPreInit(InputDriverPtr drv, InputInfoPtr pInfo, int flags)
         {
             pEvdevMultitouch->num_multitouch = 1;
             pEvdevMultitouch->vals_mt[0].pInfo = pInfo;
+            memset(pEvdevMultitouch->vals_tools, 0, sizeof(int)*MAX_VALUATORS_MT);
         }
 
 	if(pEvdevMultitouch->flags & EVDEVMULTITOUCH_RESOLUTION)
 	{
 		EvdevMultitouchSwapAxes(pEvdevMultitouch);
 	}
-#ifdef _F_IGNORE_TSP_RESOLUTION_
-	else
-	{
-		pEvdevMultitouch->absinfo[ABS_X].maximum = 0;
-		pEvdevMultitouch->absinfo[ABS_X].minimum = 0;
-		pEvdevMultitouch->absinfo[ABS_Y].maximum = 0;
-		pEvdevMultitouch->absinfo[ABS_Y].minimum = 0;
-	}
-#endif//_F_IGNORE_TSP_RESOLUTION_
 
         // register only the core device
         EvdevMultitouchAddDevice(pInfo);
@@ -3170,10 +3312,14 @@ EvdevMultitouchPreInit(InputDriverPtr drv, InputInfoPtr pInfo, int flags)
         EvdevMultitouchDragLockPreInit(pInfo);
     }
 
+    if (type)
+        free(type);
     return Success;
 
 error:
-    if (pInfo->fd >= 0)
+    if (type)
+        free(type);
+    if ((pInfo) && (pInfo->fd >= 0))
         close(pInfo->fd);
     return rc;
 }
@@ -3224,77 +3370,39 @@ _X_EXPORT XF86ModuleData evdevmultitouchModuleData =
     EvdevMultitouchUnplug
 };
 
-
 /* Return an index value for a given button event code
  * returns 0 on non-button event.
  */
 unsigned int
 EvdevMultitouchUtilButtonEventToButtonNumber(EvdevMultitouchPtr pEvdevMultitouch, int code)
 {
-    unsigned int button = 0;
+    switch (code)
+    {
+        /* Mouse buttons */
+        case BTN_LEFT:
+            return 1;
+        case BTN_MIDDLE:
+            return 2;
+        case BTN_RIGHT:
+            return 3;
+        case BTN_SIDE ... BTN_JOYSTICK - 1:
+            return 8 + code - BTN_SIDE;
 
-    switch(code) {
-    case BTN_LEFT:
-	button = 1;
-	break;
+        /* Generic buttons */
+        case BTN_0 ... BTN_2:
+            return 1 + code - BTN_0;
+        case BTN_3 ... BTN_MOUSE - 1:
+            return 8 + code - BTN_3;
 
-    case BTN_RIGHT:
-	button = 3;
-	break;
+        /* Tablet stylus buttons */
+        case BTN_TOUCH ... BTN_STYLUS2:
+            return 1 + code - BTN_TOUCH;
 
-    case BTN_MIDDLE:
-	button = 2;
-	break;
-
-        /* Treat BTN_[0-2] as LMR buttons on devices that do not advertise
-           BTN_LEFT, BTN_MIDDLE, BTN_RIGHT.
-           Otherwise, treat BTN_[0+n] as button 5+n.
-           XXX: This causes duplicate mappings for BTN_0 + n and BTN_SIDE + n
-         */
-    case BTN_0:
-        button = (TestBit(BTN_LEFT, pEvdevMultitouch->key_bitmask)) ?  8 : 1;
-        break;
-    case BTN_1:
-        button = (TestBit(BTN_MIDDLE, pEvdevMultitouch->key_bitmask)) ?  9 : 2;
-        break;
-    case BTN_2:
-        button = (TestBit(BTN_RIGHT, pEvdevMultitouch->key_bitmask)) ?  10 : 3;
-        break;
-
-        /* FIXME: BTN_3.. and BTN_SIDE.. have the same button mapping */
-    case BTN_3:
-    case BTN_4:
-    case BTN_5:
-    case BTN_6:
-    case BTN_7:
-    case BTN_8:
-    case BTN_9:
-	button = (code - BTN_0 + 5);
-        break;
-
-    case BTN_SIDE:
-    case BTN_EXTRA:
-    case BTN_FORWARD:
-    case BTN_BACK:
-    case BTN_TASK:
-	button = (code - BTN_LEFT + 5);
-	break;
-
-    default:
-	if ((code > BTN_TASK) && (code < KEY_OK)) {
-	    if (code < BTN_JOYSTICK) {
-                if (code < BTN_MOUSE)
-                    button = (code - BTN_0 + 5);
-                else
-                    button = (code - BTN_LEFT + 5);
-            }
-	}
+        /* The rest */
+        default:
+            /* Ignore */
+            return 0;
     }
-
-    if (button > EVDEVMULTITOUCH_MAXBUTTONS)
-	return 0;
-
-    return button;
 }
 
 #ifdef HAVE_PROPERTIES
@@ -3335,7 +3443,36 @@ static char* abs_labels[] = {
     AXIS_LABEL_PROP_ABS_MISC,           /* undefined */
     AXIS_LABEL_PROP_ABS_MISC,           /* undefined */
     AXIS_LABEL_PROP_ABS_MISC,           /* undefined */
-    AXIS_LABEL_PROP_ABS_VOLUME          /* 0x20 */
+    AXIS_LABEL_PROP_ABS_VOLUME, 		 /* 0x20 */
+    AXIS_LABEL_PROP_ABS_MISC,			/* undefined */
+    AXIS_LABEL_PROP_ABS_MISC,			/* undefined */
+    AXIS_LABEL_PROP_ABS_MISC,			/* undefined */
+    AXIS_LABEL_PROP_ABS_MISC,			/* undefined */
+    AXIS_LABEL_PROP_ABS_MISC,			/* undefined */
+    AXIS_LABEL_PROP_ABS_MISC,			/* undefined */
+    AXIS_LABEL_PROP_ABS_MISC,			/* undefined */
+    AXIS_LABEL_PROP_ABS_MISC,			/* undefined */
+    AXIS_LABEL_PROP_ABS_MISC,			/* undefined */
+    AXIS_LABEL_PROP_ABS_MISC,			/* undefined */
+    AXIS_LABEL_PROP_ABS_MISC,			/* undefined */
+    AXIS_LABEL_PROP_ABS_MISC,			/* undefined */
+    AXIS_LABEL_PROP_ABS_MISC,			/* undefined */
+    AXIS_LABEL_PROP_ABS_MISC,			/* undefined */
+    AXIS_LABEL_PROP_ABS_MT_SLOT,		/* 0x2f */
+    AXIS_LABEL_PROP_ABS_MT_TOUCH_MAJOR, /* 0x30 */
+    AXIS_LABEL_PROP_ABS_MT_TOUCH_MINOR, /* 0x31 */
+    AXIS_LABEL_PROP_ABS_MT_WIDTH_MAJOR, /* 0x32 */
+    AXIS_LABEL_PROP_ABS_MT_WIDTH_MINOR, /* 0x33 */
+    AXIS_LABEL_PROP_ABS_MT_ORIENTATION, /* 0x34 */
+    AXIS_LABEL_PROP_ABS_MT_POSITION_X,	/* 0x35 */
+    AXIS_LABEL_PROP_ABS_MT_POSITION_Y,	/* 0x36 */
+    AXIS_LABEL_PROP_ABS_MT_TOOL_TYPE,	/* 0x37 */
+    AXIS_LABEL_PROP_ABS_MT_BLOB_ID, 	/* 0x38 */
+    AXIS_LABEL_PROP_ABS_MT_TRACKING_ID, /* 0x39 */
+    AXIS_LABEL_PROP_ABS_MT_PRESSURE,	/* 0x3a */
+    AXIS_LABEL_PROP_ABS_MT_DISTANCE,	/* 0x3b */
+    AXIS_LABEL_PROP_ABS_MT_ANGLE,		/* 0x3c */
+    AXIS_LABEL_PROP_ABS_MT_PALM		/* 0x3d */
 };
 
 static char* rel_labels[] = {
@@ -3432,6 +3569,8 @@ static char* btn_labels[][16] = {
     }
 };
 
+#define MAX_BTN_LABEL_GROUP 6
+
 #endif /* HAVE_LABELS */
 
 static void EvdevMultitouchInitAxesLabels(EvdevMultitouchPtr pEvdevMultitouch, int natoms, Atom *atoms)
@@ -3490,7 +3629,7 @@ static void EvdevMultitouchInitButtonLabels(EvdevMultitouchPtr pEvdevMultitouch,
             int group = (button % 0x100)/16;
             int idx = button - ((button/16) * 16);
 
-            if (!btn_labels[group][idx])
+            if ((group < MAX_BTN_LABEL_GROUP) &&  (!btn_labels[group][idx]))
                 continue;
 
             atom = XIGetKnownProperty(btn_labels[group][idx]);
@@ -3570,7 +3709,33 @@ EvdevMultitouchInitProperty(DeviceIntPtr dev)
             return;
 
         XISetDevicePropertyDeletable(dev, prop_swap, FALSE);
-        
+
+#ifdef _F_SUPPORT_ROTATION_ANGLE_
+        int rotation_angle;
+        prop_rotation_angle = MakeAtom(EVDEVMULTITOUCH_PROP_ROTATION_ANGLE,
+                                strlen(EVDEVMULTITOUCH_PROP_ROTATION_ANGLE), TRUE);
+
+        rotation_angle = pEvdevMultitouch->rotation_angle;
+        rc = XIChangeDeviceProperty(dev, prop_rotation_angle, XA_INTEGER, 8,
+                                PropModeReplace, 1, &rotation_angle, TRUE);
+        if (rc != Success)
+            return;
+
+        XISetDevicePropertyDeletable(dev, prop_rotation_angle, FALSE);
+
+        int rotation_node;
+        prop_rotation_node = MakeAtom(EVDEVMULTITOUCH_PROP_ROTATION_NODE,
+                                strlen(EVDEVMULTITOUCH_PROP_ROTATION_NODE), TRUE);
+
+        rotation_node = pEvdevMultitouch->rotation_node;
+        rc = XIChangeDeviceProperty(dev, prop_rotation_node, XA_INTEGER, 32,
+                                PropModeReplace, 1, &rotation_node, FALSE);
+        if (rc != Success)
+            return;
+
+        XISetDevicePropertyDeletable(dev, prop_rotation_node, FALSE);
+#endif
+
         if (pEvdevMultitouch->flags & EVDEVMULTITOUCH_MULTITOUCH)
         {
             /* tracking ids for mt */
@@ -3640,6 +3805,57 @@ EvdevMultitouchInitProperty(DeviceIntPtr dev)
 
 }
 
+static void EvdevMultitouchSetRotationAngle(EvdevMultitouchPtr pEvdevMultitouch, int angle)
+{
+	if(pEvdevMultitouch->rotation_node <= 0)
+	{
+		xf86Msg(X_INFO, "[%s] Rotation node doesn't exist. Ignored. (angle=%d)\n", __FUNCTION__, angle);
+		return;
+	}
+
+	if(pEvdevMultitouch->rotation_angle != angle)
+	{
+		{
+			int nwrite = 0;
+			char buf;
+
+			buf = (char)(angle + '0');
+
+			nwrite = write(pEvdevMultitouch->rotation_node, &buf, sizeof(buf));
+
+			if(nwrite <= 0)
+				xf86Msg(X_ERROR, "[%s] Failed to write angle(=%d) on rotation_node. (errno=%d)\n", __FUNCTION__, angle, errno);
+			else
+				xf86Msg(X_ERROR, "[%s] Succeed to write angle(=%d) on rotation_node.\n", __FUNCTION__, angle);
+		}
+
+		pEvdevMultitouch->rotation_angle = angle;
+	}
+	else
+	{
+		xf86Msg(X_INFO, "[%s] Rotation angle has not been changed. Ignored. (angle=%d)\n", __FUNCTION__, angle);
+	}
+}
+
+#ifdef _F_INVERT_XY_FOR_MULTITOUCH_
+static void EvdevMultitouchSetInvertXY(EvdevMultitouchPtr pEvdevMultitouch, BOOL* inverts)
+{
+    int i;
+    InputInfoPtr pSubInfo = NULL;
+
+    for (i=1;i<pEvdevMultitouch->num_multitouch;i++)
+    {
+    	pSubInfo = pEvdevMultitouch->vals_mt[i].pInfo;
+
+	if(!pSubInfo || !pSubInfo->dev) continue;
+
+    	XIChangeDeviceProperty(pSubInfo->dev, prop_invert, XA_INTEGER, 8,
+					PropModeReplace, 2,
+					&inverts[0], FALSE);
+    }
+}
+#endif
+
 static void EvdevMultitouchSwapAxes(EvdevMultitouchPtr pEvdevMultitouch)
 {
     if(pEvdevMultitouch->swap_axes)
@@ -3656,6 +3872,21 @@ static void EvdevMultitouchSwapAxes(EvdevMultitouchPtr pEvdevMultitouch)
 	pEvdevMultitouch->absinfo[ABS_Y].maximum = pEvdevMultitouch->resolution.max_y;
 	pEvdevMultitouch->absinfo[ABS_Y].minimum = pEvdevMultitouch->resolution.min_y;
     }
+
+#ifdef _F_SWAP_AXES_FOR_MULTITOUCH_
+    int i;
+    InputInfoPtr pSubInfo = NULL;
+
+    for (i=1;i<pEvdevMultitouch->num_multitouch;i++)
+    {
+    	pSubInfo = pEvdevMultitouch->vals_mt[i].pInfo;
+
+	if(!pSubInfo || !pSubInfo->dev) continue;
+
+	XIChangeDeviceProperty(pSubInfo->dev, prop_swap, XA_INTEGER, 8,
+                PropModeReplace, 1, &pEvdevMultitouch->swap_axes, FALSE);
+    }
+#endif
 }
 
 static int
@@ -3676,6 +3907,9 @@ EvdevMultitouchSetProperty(DeviceIntPtr dev, Atom atom, XIPropertyValuePtr val,
             data = (BOOL*)val->data;
             pEvdevMultitouch->invert_x = data[0];
             pEvdevMultitouch->invert_y = data[1];
+#ifdef _F_INVERT_XY_FOR_MULTITOUCH_
+            EvdevMultitouchSetInvertXY(pEvdevMultitouch, data);
+#endif
         }
     } else if (atom == prop_reopen)
     {
@@ -3740,6 +3974,23 @@ EvdevMultitouchSetProperty(DeviceIntPtr dev, Atom atom, XIPropertyValuePtr val,
             EvdevMultitouchGetGrabInfo(pInfo, (BOOL)data);
         }
     }
+#ifdef _F_SUPPORT_ROTATION_ANGLE_
+    else if (atom == prop_rotation_angle)
+    {
+        int data;
+        char cdata;
+        if (val->format != 8 || val->type != XA_INTEGER || val->size != 1)
+            return BadMatch;
+
+        if (!checkonly)
+        {
+            cdata = *((char*)val->data);
+            data = (int)cdata;
+
+            EvdevMultitouchSetRotationAngle(pEvdevMultitouch, data);
+	 }
+    }
+#endif
 
     return Success;
 }
@@ -3757,6 +4008,7 @@ static InputOption *EvdevMultitouchOptionDupConvert(pointer original)
     while(dummy.options)
     {
         new = calloc(1, sizeof(struct _InputOption));
+        if (!new) return NULL;
 
         new->opt_name = xf86OptionName(dummy.options);
         new->opt_val = xf86OptionValue(dummy.options);
@@ -3821,6 +4073,7 @@ EvdevMultitouchCreateSubDevice(InputInfoPtr pInfo, int id) {
 
     if( !name )
     {
+        EvdevMultitouchFreeInputOpts(input_options);
         xf86DrvMsg(-1, X_ERROR, "[X11][%s] Failed to allocate memory !\n", __FUNCTION__);
 	 return NULL;
     }

@@ -231,6 +231,7 @@ EvdevMultitouchWheelEmuHandleButtonMap(InputInfoPtr pInfo, WheelAxisPtr pAxis, c
 		    pInfo->name, axis_name, option_string);
 
 	}
+	free(option_string);
 
 	/* Clean up and log what happened */
 	if (msg) {
