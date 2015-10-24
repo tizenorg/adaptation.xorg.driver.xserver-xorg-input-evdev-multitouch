@@ -4,8 +4,8 @@ Summary:    X.Org evdev multitouch input driver.
 Version: 2.3.16
 Release:    1
 VCS:        adaptation/xorg/driver/xserver-xorg-input-evdev-multitouch#REBASE-12-ge51bbb2836008916253c638ba0dc81875d6571da
-Group:      System/X Hardware Support
-License:    MIT
+Group:      TO_BE/FILLED_IN
+License:    TO BE FILLED IN
 Source0:    %{name}-%{version}.tar.gz
 BuildRequires:  pkgconfig(xorg-macros)
 BuildRequires:  pkgconfig(xorg-server)
@@ -43,8 +43,10 @@ This package contains xorg evdev multitouch development files
 export CFLAGS+=" -Wall -g -D_F_SUPPORT_PREFERRED_NAME_ -D_F_GESTURE_EXTENSION_ "
 %if "%{?tizen_profile_name}" == "mobile"
 export CFLAGS+=" -D_ENV_MOBILE_"
-%elseif "%{?tizen_profile_name}" == "wearable"
+%else
+%if "%{?tizen_profile_name}" == "wearable"
 export CFLAGS+=" -D_F_SUPPORT_ROTATION_ANGLE_ -D_F_INVERT_XY_FOR_MULTITOUCH_ -D_F_SWAP_AXES_FOR_MULTITOUCH_ -D_ENV_WEARABLE_ "
+%endif
 %endif
 
 %autogen -i -v -f
